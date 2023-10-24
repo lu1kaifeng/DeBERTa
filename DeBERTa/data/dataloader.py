@@ -21,7 +21,6 @@ import threading
 import traceback
 import os
 import time
-from torch._six import string_classes
 
 IS_WINDOWS = sys.platform == "win32"
 if IS_WINDOWS:
@@ -185,7 +184,7 @@ def default_collate(batch):
         return torch.LongTensor(batch)
     elif isinstance(batch[0], float):
         return torch.DoubleTensor(batch)
-    elif isinstance(batch[0], string_classes):
+    elif isinstance(batch[0], str):
         return batch
     elif isinstance(batch[0], collections.abc.Mapping):
         return {key: default_collate([d[key] for d in batch]) for key in batch[0]}
@@ -199,7 +198,7 @@ def default_collate(batch):
 def pin_memory_batch(batch):
     if isinstance(batch, torch.Tensor):
         return batch.pin_memory()
-    elif isinstance(batch, string_classes):
+    elif isinstance(batch, str):
         return batch
     elif isinstance(batch, collections.abc.Mapping):
         return {k: pin_memory_batch(sample) for k, sample in batch.items()}

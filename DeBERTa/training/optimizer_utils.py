@@ -168,3 +168,49 @@ def create_xoptimizer(model, args, num_train_steps=None, no_decay=['bias', 'Laye
       lookahead_alpha = lookahead_alpha, rank=args.rank, distributed=distributed_optimizer)
 
   return optimizer
+
+
+def create_optimizer(model, args, num_train_steps=None, no_decay=['bias', 'LayerNorm.weight']):
+  if args.fp16:
+    loss_scaler = ExpLossScaler(scale_interval=args.scale_steps, init_scale=args.loss_scale)
+  else:
+    loss_scaler = None
+
+  _no_decay = [x.strip() for x in getattr(args, 'no_decay', '').split('|') if len(x.strip()) > 0]
+  if len(_no_decay) > 0:
+    no_decay = _no_decay
+
+  opt_fn = xadam_factory(args, num_train_steps)
+
+  named_params = list(model.named_parameters())
+  type_groups = defaultdict(list)
+  for n, p in named_params:
+    key = ''
+    if any(re.search(nd, n) for nd in no_decay):
+      key += f'{str(p.dtype)}-nd'
+    else:
+      key += f'{str(p.dtype)}-d'
+    type_groups[key].append((n, p))
+  param_groups = []
+  for key, params in type_groups.items():
+    wd_theta = 0
+    weight_decay = args.weight_decay
+    if key.endswith('-nd'):
+      weight_decay = 0
+
+    group = dict(params=[],
+                 weight_decay_rate=weight_decay,
+                 wd_theta=wd_theta,
+                 names=[])
+    for (n, p) in params:
+      group['params'].append(p)
+      group['names'].append(n)
+
+    param_groups.append(group)
+  lookahead_k = getattr(args, 'lookahead_k', -1)
+  lookahead_alpha = getattr(args, 'lookahead_alpha', 0.5)
+  '''optimizer = Fp16Optimizer(param_groups, opt_fn, loss_scaler, args.max_grad_norm, lookahead_k=lookahead_k, \
+                            lookahead_alpha=lookahead_alpha)'''
+  optimizer = torch.optim.AdamW(param_groups, lr=args.learning_rate,betas=(args.adam_beta1,args.adam_beta2),eps=args.epsilon,weight_decay=args.weight_decay)
+
+  return optimizer

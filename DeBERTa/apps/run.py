@@ -11,7 +11,7 @@
 
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
-from ..deberta import tokenizers,load_vocab
+from DeBERTa.deberta import tokenizers,load_vocab
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 import argparse
@@ -24,18 +24,18 @@ import torch
 import json
 import shutil
 from torch.utils.data import DataLoader
-from ..utils import *
-from ..utils import xtqdm as tqdm
-from ..sift import AdversarialLearner,hook_sift_layer
-from .tasks import load_tasks,get_task
-from ._utils import merge_distributed, join_chunks
+from DeBERTa.utils import *
+from DeBERTa.utils import xtqdm as tqdm
+from DeBERTa.sift import AdversarialLearner,hook_sift_layer
+from DeBERTa.apps.tasks import load_tasks,get_task
+from DeBERTa.apps._utils import merge_distributed, join_chunks
 
 import pdb
 
-from ..training import DistributedTrainer, initialize_distributed, batch_to, set_random_seed,kill_children
-from ..data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
-from ..training import get_args as get_training_args
-from ..optims import get_args as get_optims_args
+from DeBERTa.training import DistributedTrainer, initialize_distributed, batch_to, set_random_seed,kill_children
+from DeBERTa.data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
+from DeBERTa.training import get_args as get_training_args
+from DeBERTa.optims import get_args as get_optims_args
 
 def create_model(args, num_labels, model_class_fn):
   # Prepare model
@@ -279,7 +279,7 @@ def main(args):
   np.random.seed(args.seed)
   torch.manual_seed(args.seed)
 
-  vocab_path, vocab_type = load_vocab(vocab_path = args.vocab_path, vocab_type = args.vocab_type, pretrained_id = args.init_model)
+  vocab_path, vocab_type = load_vocab(vocab_path = args.vocab_path, vocab_type = args.vocab_type, pretrained_id = args.vocab_type)
   tokenizer = tokenizers[vocab_type](vocab_path)
   task = get_task(args.task_name)(tokenizer = tokenizer, args=args, max_seq_len = args.max_seq_length, data_dir = args.data_dir)
   label_list = task.get_labels()

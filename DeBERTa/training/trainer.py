@@ -20,7 +20,7 @@ from ..utils import get_logger
 logger = get_logger()
 
 from .dist_launcher import get_ngpu
-from .optimizer_utils import create_xoptimizer
+from .optimizer_utils import create_xoptimizer, create_optimizer
 from ._utils import batch_to
 
 __all__ = ['DistributedTrainer', 'set_random_seed']
@@ -84,8 +84,8 @@ class DistributedTrainer:
     self.device = device
     self.eval_fn = eval_fn
     self.accumulative_update = 1
-    if hasattr(args, 'accumulative_update'):
-      self.accumulative_update = args.accumulative_update
+    '''if hasattr(args, 'accumulative_update'):
+      self.accumulative_update = args.accumulative_update'''
     
     train_data, training_steps, train_sampler = data_fn(self)
     self.train_data = train_data
@@ -105,7 +105,7 @@ class DistributedTrainer:
     self.post_loss_fn = None
 
     def _opt_fn(trainer, model, training_steps):
-      return create_xoptimizer(model, args, num_train_steps = training_steps)
+      return create_optimizer(model, args, num_train_steps = training_steps)
     optimizer_fn = optimizer_fn if optimizer_fn is not None else _opt_fn
 
     self.optimizer = optimizer_fn(self, model, training_steps)
@@ -136,10 +136,11 @@ class DistributedTrainer:
       batch_sampler = BatchSampler(self.train_sampler, self.args.train_batch_size)
       batch_sampler = DistributedBatchSampler(batch_sampler, rank = rank, world_size = world_size)
       batch_sampler.next = self.trainer_state.next_batch
-      num_workers = getattr(self.args, 'workers', 2)
+      #num_workers = getattr(self.args, 'workers', 0)
+      num_workers = 0
       train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers, worker_init_fn=self.init_fn, pin_memory=False)
       torch.cuda.empty_cache()
-      for step, batch in enumerate(AsyncDataLoader(train_dataloader, 100)):
+      for step, batch in enumerate(train_dataloader):
         if self.trainer_state.steps >= self.training_steps:
           break
         bs_scale = 1
@@ -201,34 +202,32 @@ class DistributedTrainer:
       step_loss = 0
       batch_size = 0
       self.optimizer.zero_grad()
-      forward_outputs = []
       for i, sub in enumerate(data_chunks):
         output = self.loss_fn(self, self.model, sub)
         if isinstance(output, dict):
           loss, sub_size = output['loss'], output['batch_size']
         else:
           loss, sub_size = output
-        forward_outputs.append(output)
         loss = loss/len(data_chunks)
-        if i == 0:
-          loss_scale, _loss = self.optimizer.backward(loss)
-        else:
-          _loss = loss.float().detach().item()
-          loss = loss.float() * loss_scale
-          loss.backward()
+
+        _loss = loss.float().detach().item()
+
         step_loss += _loss
         batch_size += sub_size
-      if not self.optimizer.step(bs_scale, loss_scale):
+
+        loss.backward()
+        self.optimizer.step()
         self.optimizer.zero_grad()
-        continue
+
       go_next = True
-    self.trainer_state.update_step(step_loss, batch_size , loss_scale)
+    self.trainer_state.update_step(step_loss, batch_size , 0.)
     if self.update_fn is not None:
-      self.update_fn(self, self.model, loss_scale)
+      self.update_fn(self, self.model, 0.)
     self.optimizer.zero_grad()
 
     if self.post_loss_fn is not None:
-      self.post_loss_fn(forward_outputs)
+      #self.post_loss_fn(forward_outputs)
+      pass
 
     if self.trainer_state.steps%100 == 0:
       self.trainer_state.report_state()

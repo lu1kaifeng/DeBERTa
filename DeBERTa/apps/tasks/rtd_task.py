@@ -4,7 +4,7 @@
 #
 
 from glob import glob
-from collections import OrderedDict,defaultdict,Sequence
+from collections import OrderedDict,defaultdict
 from bisect import bisect
 import copy
 import math

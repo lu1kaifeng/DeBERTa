@@ -134,7 +134,7 @@ class MLMTask(Task):
     else:
       dataset_size = self.args.num_training_steps*self.args.train_batch_size
     return DynamicDataset(examples, feature_fn = self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
-dataset_size = dataset_size, shuffle=True, **kwargs)
+dataset_size = dataset_size, shuffle=False, **kwargs)
 
   def get_labels(self):
     return list(self.tokenizer.vocab.values())

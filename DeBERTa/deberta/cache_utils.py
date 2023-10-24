@@ -21,7 +21,7 @@ logger = get_logger()
 __all__ = ['pretrained_models', 'load_model_state', 'load_vocab']
 
 class PretrainedModel:
-  def __init__(self, name, vocab, vocab_type, model='pytorch_model.bin', config='config.json', **kwargs):
+  def __init__(self, name, vocab, vocab_type, model='pytorch_model.bin', config='model_config.json', **kwargs):
     self.__dict__.update(kwargs)
     host = f'https://huggingface.co/microsoft/{name}/resolve/main/'
     self.name = name
