@@ -181,8 +181,8 @@ def create_optimizer(model, args, num_train_steps=None, no_decay=['bias', 'Layer
     no_decay = _no_decay
 
   opt_fn = xadam_factory(args, num_train_steps)
-
-  named_params = list(model.named_parameters())
+#
+  named_params = [(k,v) for k,v in model.named_parameters() if k not in ['deberta.embeddings.word_embeddings.weight']]
   type_groups = defaultdict(list)
   for n, p in named_params:
     key = ''

@@ -55,6 +55,9 @@ class DisentangledSelfAttention(nn.Module):
             if (not self.share_att_key):
                 if 'c2p' in self.pos_att_type or 'p2p' in self.pos_att_type:
                     self.pos_key_proj = nn.Linear(config.hidden_size, self.all_head_size, bias=True)
+                if config.graph:
+                    self.edge_key_proj = nn.Linear(config.hidden_size, self.all_head_size, bias=True)
+                    self.edge_query_proj = nn.Linear(config.hidden_size, self.all_head_size)
                 if 'p2c' in self.pos_att_type or 'p2p' in self.pos_att_type:
                     self.pos_query_proj = nn.Linear(config.hidden_size, self.all_head_size)
 
@@ -66,7 +69,12 @@ class DisentangledSelfAttention(nn.Module):
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3).contiguous().view(-1, x.size(1), x.size(-1))
 
-    def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None):
+    def transpose_adj_for_scores(self, x, attention_heads):
+        new_x_shape = x.size()[:-1] + (attention_heads, -1)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 3,1,2,4)
+
+    def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None):
         if query_states is None:
             query_states = hidden_states
         query_layer = self.transpose_for_scores(self.query_proj(query_states), self.num_attention_heads).float()
@@ -86,7 +94,7 @@ class DisentangledSelfAttention(nn.Module):
         attention_scores = torch.bmm(query_layer, key_layer.transpose(-1, -2)*scale)
         if self.relative_attention:
             rel_embeddings = self.pos_dropout(rel_embeddings)
-            rel_att = self.disentangled_attention_bias(query_layer, key_layer, relative_pos, rel_embeddings, scale_factor)
+            rel_att = self.disentangled_attention_bias(query_layer, key_layer, relative_pos, rel_embeddings, scale_factor,adj_mat)
 
         if rel_att is not None:
             attention_scores = (attention_scores + rel_att)
@@ -107,7 +115,7 @@ class DisentangledSelfAttention(nn.Module):
             'attention_logits': attention_scores
             }
 
-    def disentangled_attention_bias(self, query_layer, key_layer, relative_pos, rel_embeddings, scale_factor):
+    def disentangled_attention_bias(self, query_layer, key_layer, relative_pos, rel_embeddings, scale_factor,adj_mat):
         if relative_pos is None:
             q = query_layer.size(-2)
             relative_pos = build_relative_position(q, key_layer.size(-2), bucket_size = self.position_buckets, \
@@ -133,6 +141,13 @@ class DisentangledSelfAttention(nn.Module):
             if 'c2p' in self.pos_att_type or 'p2p' in self.pos_att_type:
                 pos_key_layer = self.transpose_for_scores(self.pos_key_proj(rel_embeddings), self.num_attention_heads)\
                     .repeat(query_layer.size(0)//self.num_attention_heads, 1, 1) #.split(self.all_head_size, dim=-1)
+            if self.edge_key_proj is not None:
+                edge_key_layer = self.transpose_for_scores(self.edge_key_proj(adj_mat['edge_embedding'][None,:,:]), self.num_attention_heads) \
+                    .repeat(query_layer.size(0) // self.num_attention_heads, 1, 1)
+                edge_query_layer = self.transpose_for_scores(self.edge_query_proj(adj_mat['edge_embedding'][None,:,:]),
+                                                            self.num_attention_heads) \
+                    .repeat(query_layer.size(0) // self.num_attention_heads, 1, 1)
+                pass
             if 'p2c' in self.pos_att_type or 'p2p' in self.pos_att_type:
                 pos_query_layer = self.transpose_for_scores(self.pos_query_proj(rel_embeddings), self.num_attention_heads)\
                     .repeat(query_layer.size(0)//self.num_attention_heads, 1, 1) #.split(self.all_head_size, dim=-1)
@@ -145,6 +160,19 @@ class DisentangledSelfAttention(nn.Module):
             c2p_pos = torch.clamp(relative_pos + att_span, 0, att_span*2-1).squeeze(0).expand([query_layer.size(0), query_layer.size(1), relative_pos.size(-1)])
             c2p_att = torch.gather(c2p_att, dim=-1, index=c2p_pos)
             score += c2p_att
+        #source->edge
+        if self.edge_key_proj is not None:
+            scale = 1 / math.sqrt(edge_key_layer.size(-1) * scale_factor)
+            s2e_att = torch.nn.functional.pad(torch.bmm(query_layer, edge_key_layer.transpose(-1, -2).to(query_layer) * scale),(1,0,0,0,0,0),mode='constant',value=0)
+            lookup=adj_mat['lookup'][:,None,:,:].repeat((1,self.num_attention_heads,1,1)).flatten(end_dim=1)
+            s2e_att = torch.gather(input=s2e_att,dim=-1,index=lookup)
+            score +=s2e_att
+
+        #edge->target
+        if self.edge_key_proj is not None:
+            e2t_att = torch.nn.functional.pad(torch.bmm(edge_query_layer.to(key_layer)*scale, key_layer.transpose(-1, -2)),(0,0,1,0,0,0),mode='constant',value=0)
+            e2t_att = torch.gather(input=e2t_att, dim=-2, index=lookup.transpose(-1, -2))
+            score += e2t_att
 
         # position->content
         if 'p2c' in self.pos_att_type or 'p2p' in self.pos_att_type:

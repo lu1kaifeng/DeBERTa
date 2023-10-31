@@ -180,6 +180,7 @@ class DistributedTrainer:
 
   def _train_step(self, data, bs_scale):
     self.model.train()
+    self.model.deberta.embeddings.word_embeddings.weight.requires_grad = False
     go_next=False
 
     def split(batch, parts):

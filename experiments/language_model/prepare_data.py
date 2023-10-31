@@ -14,6 +14,7 @@ def tokenize_data(input, output=None, max_seq_length=512):
     for l in tqdm(fs, ncols=80, desc='Loading'):
       if len(l) > 0:
         tokens = tokenizer.tokenize(l)
+        tokens,traced = tokenizer.traced_tokenize(l)
       else:
         tokens = []
       all_tokens.extend(tokens)

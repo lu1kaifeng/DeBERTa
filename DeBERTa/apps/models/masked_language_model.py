@@ -95,7 +95,7 @@ class MaskedLanguageModel(NNModule):
     self.lm_predictions = EnhancedMaskDecoder(self.deberta.config, self.deberta.embeddings.word_embeddings.weight.size(0))
     self.apply(self.init_weights)
 
-  def forward(self, input_ids, input_mask=None, labels=None, position_ids=None, attention_mask=None):
+  def forward(self, input_ids, input_mask=None, labels=None, position_ids=None, attention_mask=None, adj_mat = None):
     device = list(self.parameters())[0].device
     input_ids = input_ids.to(device)
     input_mask = input_mask.to(device)
@@ -106,7 +106,7 @@ class MaskedLanguageModel(NNModule):
     else:
       attention_mask = input_mask
 
-    encoder_output = self.deberta(input_ids, input_mask, type_ids, output_all_encoded_layers=True, position_ids = position_ids)
+    encoder_output = self.deberta(input_ids, input_mask, type_ids, output_all_encoded_layers=True, position_ids = position_ids,adj_mat=adj_mat)
     encoder_layers = encoder_output['hidden_states']
     z_states = encoder_output['position_embeddings']
     ctx_layer = encoder_layers[-1]

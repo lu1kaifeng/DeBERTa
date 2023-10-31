@@ -56,7 +56,7 @@ class DeBERTa(torch.nn.Module):
     self.pre_trained = pre_trained
     self.apply_state(state)
 
-  def forward(self, input_ids, attention_mask=None, token_type_ids=None, output_all_encoded_layers=True, position_ids = None, return_att = False):
+  def forward(self, input_ids, attention_mask=None, token_type_ids=None, output_all_encoded_layers=True, position_ids = None, return_att = False, adj_mat = None):
     """
     Args:
       input_ids:
@@ -110,11 +110,11 @@ class DeBERTa(torch.nn.Module):
     if token_type_ids is None:
       token_type_ids = torch.zeros_like(input_ids)
 
-    ebd_output = self.embeddings(input_ids.to(torch.long), token_type_ids.to(torch.long), position_ids, attention_mask)
+    ebd_output = self.embeddings(input_ids.to(torch.long), token_type_ids.to(torch.long), position_ids, attention_mask,adj_mat)
     embedding_output = ebd_output['embeddings']
     encoder_output = self.encoder(embedding_output,
                    attention_mask,
-                   output_all_encoded_layers=output_all_encoded_layers, return_att = return_att)
+                   output_all_encoded_layers=output_all_encoded_layers, return_att = return_att,adj_mat=ebd_output['adj_embeddings'])
     encoder_output.update(ebd_output)
     return encoder_output
 

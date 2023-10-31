@@ -45,8 +45,8 @@ class BertAttention(nn.Module):
     self.output = BertSelfOutput(config)
     self.config = config
 
-  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None):
-    output = self.self(hidden_states, attention_mask, return_att, query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings)
+  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None):
+    output = self.self(hidden_states, attention_mask, return_att, query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat)
     self_output, att_matrix, att_logits_=output['hidden_states'], output['attention_probs'], output['attention_logits']
     if query_states is None:
       query_states = hidden_states
@@ -91,9 +91,9 @@ class BertLayer(nn.Module):
     self.intermediate = BertIntermediate(config)
     self.output = BertOutput(config)
 
-  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None):
+  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None):
     attention_output = self.attention(hidden_states, attention_mask, return_att=return_att, \
-      query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings)
+      query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat)
     if return_att:
       attention_output, att_matrix = attention_output
     intermediate_output = self.intermediate(attention_output)
@@ -176,7 +176,7 @@ class BertEncoder(nn.Module):
           max_position=self.max_relative_positions, device = hidden_states.device)
     return relative_pos
 
-  def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, return_att=False, query_states = None, relative_pos=None):
+  def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, return_att=False, query_states = None, relative_pos=None,adj_mat =None):
     if attention_mask.dim()<=2:
       input_mask = attention_mask
     else:
@@ -192,7 +192,7 @@ class BertEncoder(nn.Module):
       next_kv = hidden_states
     rel_embeddings = self.get_rel_embedding()
     for i, layer_module in enumerate(self.layer):
-      output_states = layer_module(next_kv, attention_mask, return_att, query_states = query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings)
+      output_states = layer_module(next_kv, attention_mask, return_att, query_states = query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat)
       if return_att:
         output_states, att_m = output_states
 
@@ -231,6 +231,9 @@ class BertEmbeddings(nn.Module):
     self.position_biased_input = getattr(config, 'position_biased_input', True)
     self.position_embeddings = nn.Embedding(config.max_position_embeddings, self.embedding_size)
 
+    if config.graph:
+      self.edge_embeddings = nn.Embedding(config.edge_vocab_size, self.embedding_size)
+
     if config.type_vocab_size>0:
       self.token_type_embeddings = nn.Embedding(config.type_vocab_size, self.embedding_size)
     
@@ -241,7 +244,7 @@ class BertEmbeddings(nn.Module):
     self.output_to_half = False
     self.config = config
 
-  def forward(self, input_ids, token_type_ids=None, position_ids=None, mask = None):
+  def forward(self, input_ids, token_type_ids=None, position_ids=None, mask = None,adj_mat=None):
     seq_length = input_ids.size(1)
     if position_ids is None:
       position_ids = torch.arange(0, seq_length, dtype=torch.long, device=input_ids.device)
@@ -251,6 +254,14 @@ class BertEmbeddings(nn.Module):
 
     words_embeddings = self.word_embeddings(input_ids)
     position_embeddings = self.position_embeddings(position_ids.long())
+
+    if adj_mat is not None:
+      adj_clamped = adj_mat.clamp(min=0).long()
+      adj_lookup = adj_clamped.clone()
+      edge_ids = torch.unique(adj_clamped[torch.logical_not(adj_clamped == 0 )])
+      for i,e in enumerate(edge_ids):
+        adj_lookup[adj_clamped == e] = i+1
+      edge_embeddings = self.edge_embeddings(edge_ids)
 
     embeddings = words_embeddings
     if self.config.type_vocab_size>0:
@@ -264,6 +275,17 @@ class BertEmbeddings(nn.Module):
       embeddings = self.embed_proj(embeddings)
     embeddings = MaskedLayerNorm(self.LayerNorm, embeddings, mask)
     embeddings = self.dropout(embeddings)
+    if adj_mat is not None:
+      return {
+        'embeddings': embeddings,
+        'position_embeddings': position_embeddings,
+        'adj_embeddings': {'matrix':adj_clamped,
+                           'edge_ids':edge_ids,
+                           'edge_embedding':edge_embeddings,
+                           'lookup':adj_lookup
+                           }
+      }
+
     return {
         'embeddings': embeddings,
         'position_embeddings': position_embeddings}

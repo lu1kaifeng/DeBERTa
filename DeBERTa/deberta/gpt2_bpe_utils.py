@@ -114,6 +114,18 @@ class Encoder:
             bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
         return bpe_tokens
 
+    def traced_encode(self, text):
+        bpe_tokens = []
+        traced = []
+        i=0
+        for token in text.split(' '):
+            token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
+            bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
+            while not (len(bpe_tokens) == len(traced)):
+                traced.append(i)
+            i+=1
+        return bpe_tokens,traced
+
     def decode(self, tokens):
         text = ''.join([self.decoder[token] for token in tokens])
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors=self.errors)
