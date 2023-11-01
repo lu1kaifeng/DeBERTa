@@ -1,7 +1,16 @@
 # DeBERTa: Decoding-enhanced BERT with Disentangled Attention
 
 This repository is the official implementation of [ **DeBERTa**: **D**ecoding-**e**nhanced **BERT** with Disentangled **A**ttention ](https://arxiv.org/abs/2006.03654) and [DeBERTa V3: Improving DeBERTa using ELECTRA-Style Pre-Training with Gradient-Disentangled Embedding Sharing](https://arxiv.org/abs/2111.09543)
+## AMR-Augmented DeBERTa
+A method for processing natural language text and its corresponding Abstract Meaning Representation (AMR) graph:
 
+For a given text and its corresponding Abstract Meaning Representation (AMR) graph, first generate the adjacency matrix of the AMR graph. According to the definition of the AMR schema, the edges in the matrix belong to one of over 100 types. Similar to DeBERTa's encoding of tokens, vocabulary embeddings are assigned to each type.
+
+For each input and each layer, determine the types of edges present in the adjacency matrix, obtain the corresponding embeddings, and project them into the key projection matrix of the AMR graph to obtain keys. Multiply the keys of the AMR graph by the values of the text, and then use the adjacency matrix to obtain attention scores from the starting point to the ending point of the edge through the torch.gather operation.
+
+Next, project the edge type embeddings into the value projection matrix of the AMR graph to obtain values. Multiply the values of the AMR graph by the keys of the text, and then use the transposed adjacency matrix through the torch.gather operation to obtain attention scores from the edge to the ending point of the edge.
+
+Add these two attention scores to get the attention score from text to text, completing the comprehensive encoding of the AMR graph and text.
 ## News
 ### 03/18/2023
 - [DeBERTaV3](https://openreview.net/forum?id=sE7-XhLxHA) paper is accepted by ICLR 2023.

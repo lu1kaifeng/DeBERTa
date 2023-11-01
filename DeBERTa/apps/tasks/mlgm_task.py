@@ -130,6 +130,7 @@ class NGramMaskGenerator:
 class MLGMTask(Task):
     def __init__(self, data_dir, tokenizer, args, **kwargs):
         super().__init__(tokenizer, args, **kwargs)
+        self.roles = None
         self.data_dir = data_dir
         self.mask_gen = NGramMaskGenerator(tokenizer, max_gram=self.args.max_ngram)
 
@@ -209,6 +210,7 @@ class MLGMTask(Task):
         with open(roles_path, encoding='utf-8') as rs:
             roles = eval(rs.readline())
             roles = {v: k for k, v in enumerate(roles)}
+            self.roles = roles
 
         def _tokenize(elem):
             if 'INSTANCE' in elem:
@@ -227,12 +229,12 @@ class MLGMTask(Task):
 
     def get_feature_fn(self, max_seq_len=512, mask_gen=None):
         def _example_to_feature(example, rng=None, ext_params=None, **kwargs):
-            return self.example_to_feature(self.tokenizer, example, max_seq_len=max_seq_len, \
+            return self.example_to_feature(self.tokenizer,self.roles, example, max_seq_len=max_seq_len, \
                                            rng=rng, mask_generator=mask_gen, ext_params=ext_params, **kwargs)
 
         return _example_to_feature
 
-    def example_to_feature(self, tokenizer, example, max_seq_len=512, rng=None, mask_generator=None, ext_params=None,
+    def example_to_feature(self, tokenizer,adj_tokenizer, example, max_seq_len=512, rng=None, mask_generator=None, ext_params=None,
                            **kwargs):
         if not rng:
             rng = random
