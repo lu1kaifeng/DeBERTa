@@ -42,16 +42,17 @@ logger = get_logger()
 __all__ = ["MLGMTask"]
 
 
-class NGramMaskGenerator:
+class GraphMaskGenerator:
     """
   Mask ngram tokens
   https://github.com/zihangdai/xlnet/blob/0b642d14dd8aec7f1e1ecbf7d6942d5faa6be1f0/data_utils.py
   """
 
-    def __init__(self, tokenizer, mask_lm_prob=0.15, max_seq_len=512, max_preds_per_seq=None, max_gram=1, keep_prob=0.1,
+    def __init__(self, tokenizer, mask_lm_prob=0.15,mask_gm_prob=0.30, max_seq_len=512, max_preds_per_seq=None, max_gram=1, keep_prob=0.1,
                  mask_prob=0.8, **kwargs):
         self.tokenizer = tokenizer
         self.mask_lm_prob = mask_lm_prob
+        self.mask_gm_prob = mask_gm_prob
         self.keep_prob = keep_prob
         self.mask_prob = mask_prob
         assert self.mask_prob + self.keep_prob <= 1, f'The prob of using [MASK]({mask_prob}) and the prob of using original token({keep_prob}) should between [0,1]'
@@ -63,7 +64,8 @@ class NGramMaskGenerator:
         self.mask_window = int(1 / mask_lm_prob)  # make ngrams per window sized context
         self.vocab_words = list(tokenizer.vocab.keys())
 
-    def mask_tokens(self, tokens, rng, **kwargs):
+    def mask_tokens(self, tokens, adj,rng, **kwargs):
+        edge_mask_token = 2
         special_tokens = ['[MASK]', '[CLS]', '[SEP]', '[PAD]', '[UNK]']  # + self.tokenizer.tokenize(' ')
         indices = [i for i in range(len(tokens)) if tokens[i] not in special_tokens]
         ngrams = np.arange(1, self.max_gram + 1, dtype=np.int64)
@@ -78,6 +80,18 @@ class NGramMaskGenerator:
                 unigrams.append([id])
 
         num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
+
+
+        adj_indices = numpy.nonzero(adj > 0)
+        adj_values = adj[adj_indices]
+        edge_num_to_predict = min(self.max_preds_per_seq, max(0, int(round(len(adj_values) * self.mask_gm_prob))))
+        adj_to_mask = rng.sample(range(len(adj_values)), edge_num_to_predict)
+        adj_labels = numpy.zeros(adj.shape)
+        for m in adj_to_mask:
+            adj_labels[adj_indices[0][m],adj_indices[1][m]] = adj_values[m]
+            adj[adj_indices[0][m],adj_indices[1][m]] = edge_mask_token
+        adj_labels
+
         mask_len = 0
         offset = 0
         mask_grams = np.array([False] * len(unigrams))
@@ -102,7 +116,8 @@ class NGramMaskGenerator:
                     break
 
         target_labels = [self.tokenizer.vocab[x] if x else 0 for x in target_labels]
-        return tokens, target_labels
+
+        return tokens, target_labels,adj,adj_labels
 
     def _choice(self, rng, data, p):
         cul = np.cumsum(p)
@@ -132,7 +147,7 @@ class MLGMTask(Task):
         super().__init__(tokenizer, args, **kwargs)
         self.roles = None
         self.data_dir = data_dir
-        self.mask_gen = NGramMaskGenerator(tokenizer, max_gram=self.args.max_ngram)
+        self.mask_gen = GraphMaskGenerator(tokenizer, max_gram=self.args.max_ngram)
 
     def train_data(self, max_seq_len=512, **kwargs):
         data = self.load_data(os.path.join(self.data_dir, 'toks.txt'))
@@ -242,12 +257,12 @@ class MLGMTask(Task):
         example, adj = example
         segments = [example.segments[0].strip().split()]
         segments = _truncate_segments(segments, max_num_tokens, rng)
-        padded_adj = np.zeros((max_seq_len,max_seq_len))
+        padded_adj = np.zeros((max_seq_len,max_seq_len),dtype=int)
         padded_adj[1:adj.shape[0]+1, 1:adj.shape[1]+1] = adj
         _tokens = ['[CLS]'] + segments[0] + ['[SEP]']
-        '''if mask_generator:
-      tokens, lm_labels = mask_generator.mask_tokens(_tokens, rng)'''
-        lm_labels = [0 for i in range(len(segments[0]))]
+        if mask_generator:
+            tokens, lm_labels,padded_adj,adj_labels = mask_generator.mask_tokens(_tokens, padded_adj,rng)
+        '''lm_labels = [0 for i in range(len(segments[0]))]'''
         token_ids = tokenizer.convert_tokens_to_ids(_tokens)
 
         features = OrderedDict(input_ids=token_ids,
@@ -258,6 +273,7 @@ class MLGMTask(Task):
         for f in features:
             features[f] = torch.tensor(features[f] + [0] * (max_seq_len - len(token_ids)), dtype=torch.int)
         features['adj_mat'] = torch.tensor(padded_adj,dtype=torch.int32)
+        features['adj_label'] = torch.tensor(adj_labels, dtype=torch.int32)
         return features
 
     def get_eval_fn(self):

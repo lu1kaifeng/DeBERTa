@@ -14,6 +14,8 @@ import numpy as np
 import pdb
 from collections import defaultdict, OrderedDict
 from collections.abc import Mapping, Sequence
+
+import tqdm
 from torch.utils.data import DataLoader
 from ..data import BatchSampler, DistributedBatchSampler,RandomSampler,SequentialSampler, AsyncDataLoader
 from ..utils import get_logger
@@ -140,7 +142,7 @@ class DistributedTrainer:
       num_workers = 0
       train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers, worker_init_fn=self.init_fn, pin_memory=False)
       torch.cuda.empty_cache()
-      for step, batch in enumerate(train_dataloader):
+      for step, batch in tqdm.tqdm(enumerate(train_dataloader)):
         if self.trainer_state.steps >= self.training_steps:
           break
         bs_scale = 1

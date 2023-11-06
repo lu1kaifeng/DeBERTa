@@ -67,7 +67,8 @@ def train_model(args, model, device, train_data, eval_data, run_eval_fn, train_f
   def _loss_fn(trainer, model, data):
     output = model(**data)
     loss = output['loss']
-    return loss.mean(), data['input_ids'].size(0)
+    gm_loss = output['gm_loss']
+    return loss.mean()+gm_loss.mean(), data['input_ids'].size(0)
 
   def get_adv_loss_fn():
     adv_modules = hook_sift_layer(model, hidden_size=model.config.hidden_size, learning_rate=args.vat_learning_rate, init_perturbation=args.vat_init_perturbation)
