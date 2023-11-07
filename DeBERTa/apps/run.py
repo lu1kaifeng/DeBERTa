@@ -61,8 +61,8 @@ def train_model(args, model, device, train_data, eval_data, run_eval_fn, train_f
 
   def eval_fn(trainer, model, device, tag):
     results = run_eval_fn(trainer.args, model, device, eval_data, tag, steps=trainer.trainer_state.steps)
-    eval_metric = np.mean([v[0] for k,v in results.items() if 'train' not in k])
-    return eval_metric
+    eval_metric = np.mean([v[0] for k,(v,_) in results.items() if 'train' not in k])
+    return eval_metric,results
 
   def _loss_fn(trainer, model, data):
     output = model(**data)
@@ -285,14 +285,14 @@ def main(args):
   task = get_task(args.task_name)(tokenizer = tokenizer, args=args, max_seq_len = args.max_seq_length, data_dir = args.data_dir)
   label_list = task.get_labels()
 
+  train_data = task.train_data(max_seq_len=args.max_seq_length, debug=args.debug)
   eval_data = task.eval_data(max_seq_len=args.max_seq_length)
   logger.info("  Evaluation batch size = %d", args.eval_batch_size)
   if args.do_predict:
     test_data = task.test_data(max_seq_len=args.max_seq_length)
     logger.info("  Prediction batch size = %d", args.predict_batch_size)
 
-  if args.do_train:
-    train_data = task.train_data(max_seq_len=args.max_seq_length, debug=args.debug)
+
   model_class_fn = task.get_model_class_fn()
   model = create_model(args, len(label_list), model_class_fn)
   if args.do_train:

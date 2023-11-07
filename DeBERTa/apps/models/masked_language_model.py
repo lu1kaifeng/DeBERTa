@@ -64,7 +64,7 @@ class EnhancedMaskDecoder(torch.nn.Module):
     label_index = (target_ids.view(-1)>0).nonzero().view(-1)
     lm_labels = lm_labels.index_select(0, label_index)
     lm_loss = loss_fct(lm_logits, lm_labels.long())
-    return lm_logits, lm_labels, lm_loss,gm_logits,gm_loss
+    return lm_logits, lm_labels, lm_loss,gm_logits,gm_loss,edge_labels_labels
 
   def emd_context_layer(self, encoder_layers, z_states, attention_mask, encoder, target_ids, input_ids, input_mask, relative_pos=None,adj_mat=None):
     if attention_mask.dim()<=2:
@@ -138,12 +138,13 @@ class MaskedLanguageModel(NNModule):
       label_index = (lm_labels.view(-1) > 0).nonzero()
       label_inputs = torch.gather(input_ids.view(-1), 0, label_index.view(-1))
       if label_index.size(0)>0:
-        (lm_logits, lm_labels, lm_loss,gm_logits,gm_loss) = self.lm_predictions(encoder_layers, ebd_weight,edge_ebd_weight, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder,adj_mat=encoder_output['adj_embeddings'])
+        (lm_logits, lm_labels, lm_loss,gm_logits,gm_loss,gm_labels) = self.lm_predictions(encoder_layers, ebd_weight,edge_ebd_weight, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder,adj_mat=encoder_output['adj_embeddings'])
 
     return {
             'logits' : lm_logits,
             'labels' : lm_labels,
             'loss' : lm_loss.float(),
             'gm_loss': gm_loss.float(),
-            'gm_logits': gm_logits
+            'gm_logits': gm_logits,
+      'gm_labels': gm_labels,
           }

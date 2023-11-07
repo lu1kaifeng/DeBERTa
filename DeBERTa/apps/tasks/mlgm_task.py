@@ -147,12 +147,21 @@ class MLGMTask(Task):
         super().__init__(tokenizer, args, **kwargs)
         self.roles = None
         self.data_dir = data_dir
+        self.split = 0.9
         self.mask_gen = GraphMaskGenerator(tokenizer, max_gram=self.args.max_ngram)
 
+    def _list_splitter(self,list_to_split, ratio):
+        elements = len(list_to_split)
+        middle = int(elements * ratio)
+        return [list_to_split[:middle], list_to_split[middle:]]
     def train_data(self, max_seq_len=512, **kwargs):
-        data = self.load_data(os.path.join(self.data_dir, 'toks.txt'))
+        self.data = self.load_data(os.path.join(self.data_dir, 'toks.txt'))
+        data,eval_data = self._list_splitter(self.data,self.split)
+        self.data_eval = eval_data
         adj_mat_data = self.load_adj_mat_data(os.path.join(self.data_dir, 'adjs.txt'),
                                               os.path.join(self.data_dir, 'roles.txt'))
+        adj_mat_data,eval_adj_mat_data = self._list_splitter(adj_mat_data,self.split)
+        self.adj_mat_data_eval = eval_adj_mat_data
         examples = ExampleSet(data)
         if self.args.num_training_steps is None:
             dataset_size = len(examples)
@@ -166,31 +175,21 @@ class MLGMTask(Task):
 
     def eval_data(self, max_seq_len=512, **kwargs):
         ds = [
-            # self._data('dev', 'valid.txt', 'dev'),
+            (self.data_eval,self.adj_mat_data_eval)
         ]
-
-        for d in ds:
-            _size = len(d.data)
-            d.data = StaticDataset(d.data,
-                                   feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen),
-                                   dataset_size=_size, **kwargs)
-        return ds
+        dss = []
+        for d,adj_d in ds:
+            _size = len(d)
+            dss.append(self._data('eval',StaticDataset(d, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
+                             dataset_size=_size, shuffle=False, supplementary=adj_d, **kwargs)))
+        return dss
 
     def test_data(self, max_seq_len=512, **kwargs):
         """See base class."""
         raise NotImplemented('This method is not implemented yet.')
 
-    def _data(self, name, path, type_name='dev', ignore_metric=False):
-        if isinstance(path, str):
-            path = [path]
-        data = []
-        for p in path:
-            input_src = os.path.join(self.data_dir, p)
-            assert os.path.exists(input_src), f"{input_src} doesn't exists"
-            data.extend(self.load_data(input_src))
-
+    def _data(self, name, examples, type_name='dev', ignore_metric=False):
         predict_fn = self.get_predict_fn()
-        examples = ExampleSet(data)
         return EvalData(name, examples,
                         metrics_fn=self.get_metrics_fn(), predict_fn=predict_fn, ignore_metric=ignore_metric,
                         critial_metrics=['accuracy'])
@@ -291,47 +290,67 @@ class MLGMTask(Task):
                 eval_dataloader = DataLoader(eval_item.data, batch_sampler=batch_sampler, num_workers=args.workers)
                 model.eval()
                 eval_loss, eval_accuracy = 0, 0
+                gm_eval_loss, gm_eval_accuracy = 0, 0
                 nb_eval_steps, nb_eval_examples = 0, 0
                 predicts = []
+                gm_predicts=[]
                 labels = []
-                for batch in tqdm(AsyncDataLoader(eval_dataloader), ncols=80, desc='Evaluating: {}'.format(prefix),
+                gm_labels=[]
+                for batch in tqdm(eval_dataloader, ncols=80, desc='Evaluating: {}'.format(prefix),
                                   disable=no_tqdm):
                     batch = batch_to(batch, device)
                     with torch.no_grad():
                         output = model(**batch)
                     logits = output['logits'].detach().argmax(dim=-1)
+                    gm_logits = output['gm_logits'].detach().argmax(dim=-1)
                     tmp_eval_loss = output['loss'].detach()
+                    tmp_gm_eval_loss = output['gm_loss'].detach()
                     if 'labels' in output:
                         label_ids = output['labels'].detach().to(device)
                     else:
                         label_ids = batch['labels'].to(device)
+                    if 'gm_labels' in output:
+                        gm_label_ids = output['gm_labels'].detach().to(device)
+                    else:
+                        gm_label_ids = batch['gm_labels'].to(device)
                     predicts.append(logits)
+                    gm_predicts.append(gm_logits)
                     labels.append(label_ids)
+                    gm_labels.append(gm_label_ids)
                     eval_loss += tmp_eval_loss.mean()
+                    gm_eval_loss += tmp_gm_eval_loss.mean()
                     input_ids = batch['input_ids']
                     nb_eval_examples += input_ids.size(0)
                     nb_eval_steps += 1
 
                 eval_loss = eval_loss / nb_eval_steps
                 predicts = merge_distributed(predicts)
+                gm_predicts = merge_distributed(gm_predicts)
                 labels = merge_distributed(labels)
+                gm_labels=merge_distributed(gm_labels)
 
                 result = OrderedDict()
                 metrics_fn = eval_item.metrics_fn
                 metrics = metrics_fn(predicts.numpy(), labels.numpy())
+                gm_metrics = metrics_fn(gm_predicts.numpy(), gm_labels.numpy())
                 result.update(metrics)
+                result.update({'gm_'+k:v for k,v in gm_metrics.items()})
                 result['perplexity'] = torch.exp(eval_loss).item()
+                result['gm_perplexity'] = torch.exp(gm_eval_loss).item()
                 critial_metrics = set(metrics.keys()) if eval_item.critial_metrics is None or len(
                     eval_item.critial_metrics) == 0 else eval_item.critial_metrics
                 eval_metric = np.mean([v for k, v in metrics.items() if k in critial_metrics])
+                gm_eval_metric = np.mean([v for k, v in metrics.items() if k in critial_metrics])
                 result['eval_loss'] = eval_loss.item()
-                result['eval_metric'] = eval_metric
+                #result['eval_metric'] = eval_metric
                 result['eval_samples'] = len(labels)
+                result['gm_eval_loss'] = gm_eval_loss.item()
+                #result['gm_eval_metric'] = np.mean([v for k, v in gm_metrics.items() if k in critial_metrics])
                 if args.rank <= 0:
                     logger.info("***** Eval results-{}-{} *****".format(name, prefix))
                     for key in sorted(result.keys()):
                         logger.info("  %s = %s", key, str(result[key]))
-                eval_results[name] = (eval_metric, predicts, labels)
+                eval_results[name] = (gm_eval_metric, gm_predicts, gm_labels),result
 
             return eval_results
 

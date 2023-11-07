@@ -60,7 +60,10 @@ class TrainerState:
     self.next_batch += 1
     self.loss_scale = loss_scale
     self.writer.add_scalar('train/loss',loss,self.steps)
-  
+  def update_eval(self,eval_results):
+    for k,v in eval_results.items():
+      self.writer.add_scalars('eval/'+k,v[1])
+    self.writer.flush()
   def report_state(self):
     self.writer.flush()
     if self.steps <= self._last_report_step:
@@ -157,7 +160,7 @@ class DistributedTrainer:
       self.trainer_state.epochs += 1
       self.trainer_state.next_batch = 0
       self.trainer_state.report_state()
-      self._eval_model()
+      self.trainer_state.update_eval(self._eval_model())
 
   def save_model(self, args, checkpoint_dir, chk_postfix, model, optimizer):
     save_path= os.path.join(checkpoint_dir, f'pytorch.model-{chk_postfix}.bin')
@@ -178,12 +181,13 @@ class DistributedTrainer:
     _metric = self.trainer_state.best_metric
     _steps = self.trainer_state.best_steps
     if self.eval_fn is not None:
-      metric = self.eval_fn(self, self.model, self.device, tag=f'{self.trainer_state.steps:06}-{self.training_steps}')
+      metric,results = self.eval_fn(self, self.model, self.device, tag=f'{self.trainer_state.steps:06}-{self.training_steps}')
       if metric > _metric:
         _metric = metric
         _steps = self.trainer_state.steps
       logger.info(f'Best metric: {_metric}@{_steps}')
     self.trainer_state.best_metric, self.trainer_state.best_steps =  _metric, _steps
+    return results
 
   def _train_step(self, data, bs_scale):
     self.model.train()
