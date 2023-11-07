@@ -16,6 +16,7 @@ from collections import defaultdict, OrderedDict
 from collections.abc import Mapping, Sequence
 
 import tqdm
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from ..data import BatchSampler, DistributedBatchSampler,RandomSampler,SequentialSampler, AsyncDataLoader
 from ..utils import get_logger
@@ -50,6 +51,7 @@ class TrainerState:
     self.best_metric = -1e9
     self.name = name
     self.run_id = None
+    self.writer = SummaryWriter()
 
   def update_step(self, loss, examples, loss_scale):
     self.examples += examples
@@ -57,8 +59,10 @@ class TrainerState:
     self.steps += 1
     self.next_batch += 1
     self.loss_scale = loss_scale
+    self.writer.add_scalar('train/loss',loss,self.steps)
   
   def report_state(self):
+    self.writer.flush()
     if self.steps <= self._last_report_step:
       return
 
@@ -84,6 +88,7 @@ class DistributedTrainer:
     self.__dict__.update(kwargs)
     self.args = args
     self.device = device
+
     self.eval_fn = eval_fn
     self.accumulative_update = 1
     '''if hasattr(args, 'accumulative_update'):

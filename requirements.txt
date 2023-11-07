@@ -13,3 +13,5 @@ sentencepiece
 #GitPython
 torch
 #torchvision
+tensorboard
+tensorboardx
