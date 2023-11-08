@@ -62,7 +62,7 @@ class TrainerState:
     self.writer.add_scalar('train/loss',loss,self.steps)
   def update_eval(self,eval_results):
     for k,v in eval_results.items():
-      self.writer.add_scalars('eval/'+k,v[1])
+      self.writer.add_scalars('eval/'+k,v[1],self.steps)
     self.writer.flush()
   def report_state(self):
     self.writer.flush()
@@ -244,7 +244,7 @@ class DistributedTrainer:
     if self.trainer_state.steps%100 == 0:
       self.trainer_state.report_state()
     if self.trainer_state.steps%self.dump_interval == 0:
-      self._eval_model()
+      self.trainer_state.update_eval(self._eval_model())
 
   def _setup_model(self, args, model):
     if args.world_size > 1:

@@ -324,6 +324,7 @@ class MLGMTask(Task):
                     nb_eval_steps += 1
 
                 eval_loss = eval_loss / nb_eval_steps
+                gm_eval_loss = gm_eval_loss /  nb_eval_steps
                 predicts = merge_distributed(predicts)
                 gm_predicts = merge_distributed(gm_predicts)
                 labels = merge_distributed(labels)
