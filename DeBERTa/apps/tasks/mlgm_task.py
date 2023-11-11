@@ -66,6 +66,7 @@ class GraphMaskGenerator:
 
     def mask_tokens(self, tokens, adj,rng, **kwargs):
         edge_mask_token = 2
+        edge_instance_token = 1
         special_tokens = ['[MASK]', '[CLS]', '[SEP]', '[PAD]', '[UNK]']  # + self.tokenizer.tokenize(' ')
         indices = [i for i in range(len(tokens)) if tokens[i] not in special_tokens]
         ngrams = np.arange(1, self.max_gram + 1, dtype=np.int64)
@@ -82,14 +83,26 @@ class GraphMaskGenerator:
         num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
 
 
-        adj_indices = numpy.nonzero(adj > 0)
+        adj_indices = numpy.nonzero(numpy.logical_or(adj > 0,adj < 0))
+        adj_O_indices = numpy.nonzero(numpy.logical_not(numpy.logical_or(adj > 0,adj < 0))[:len(tokens),:len(tokens)])
+        adj[adj < 0] = edge_instance_token
         adj_values = adj[adj_indices]
+        adj_O_values = adj[adj_O_indices]
+        x,y = adj_indices
+        adj_reverse_indices = (y,x)
+        adj_reverse_values = adj[adj_reverse_indices]
         edge_num_to_predict = min(self.max_preds_per_seq, max(0, int(round(len(adj_values) * self.mask_gm_prob))))
         adj_to_mask = rng.sample(range(len(adj_values)), edge_num_to_predict)
+        adj_O_to_mask = rng.sample(range(len(adj_O_values)), edge_num_to_predict // 3)
         adj_labels = numpy.zeros(adj.shape)
         for m in adj_to_mask:
             adj_labels[adj_indices[0][m],adj_indices[1][m]] = adj_values[m]
-            adj[adj_indices[0][m],adj_indices[1][m]] = edge_mask_token
+            adj[adj_indices[0][m], adj_indices[1][m]] = edge_mask_token
+            if not (adj_reverse_indices[0][m] == adj_reverse_indices[1][m]):
+                adj_labels[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = adj_reverse_values[m]
+                adj[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = edge_mask_token
+        for m in adj_O_to_mask:
+            adj[adj_O_indices[0][m], adj_O_indices[1][m]] = edge_mask_token
         adj_labels
 
         mask_len = 0
@@ -168,7 +181,7 @@ class MLGMTask(Task):
         else:
             dataset_size = self.args.num_training_steps * self.args.train_batch_size
         return StaticDataset(examples, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
-                             dataset_size=dataset_size, shuffle=False, supplementary=adj_mat_data, **kwargs)
+                            dataset_size=dataset_size, shuffle=False, supplementary=adj_mat_data, **kwargs)
 
     def get_labels(self):
         return list(self.tokenizer.vocab.values())
