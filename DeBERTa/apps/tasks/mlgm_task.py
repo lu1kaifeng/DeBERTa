@@ -96,12 +96,16 @@ class GraphMaskGenerator:
         adj_O_to_mask = rng.sample(range(len(adj_O_values)), edge_num_to_predict // 3)
         adj_labels = numpy.zeros(adj.shape)
         for m in adj_to_mask:
-            adj_labels[adj_indices[0][m],adj_indices[1][m]] = adj_values[m]
+            adj_labels[adj_indices[0][m],adj_indices[1][m]] = adj_values[m]+1
             adj[adj_indices[0][m], adj_indices[1][m]] = edge_mask_token
             if not (adj_reverse_indices[0][m] == adj_reverse_indices[1][m]):
-                adj_labels[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = adj_reverse_values[m]
+                adj_labels[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = adj_reverse_values[m] + 1
                 adj[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = edge_mask_token
+        for m in range(len(adj_values)):
+            if m not in adj_to_mask:
+                adj_labels[adj_indices[0][m], adj_indices[1][m]] = adj_values[m] + 1
         for m in adj_O_to_mask:
+            adj_labels[adj_O_indices[0][m], adj_O_indices[1][m]] = 1
             adj[adj_O_indices[0][m], adj_O_indices[1][m]] = edge_mask_token
         adj_labels
 

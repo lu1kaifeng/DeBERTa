@@ -40,7 +40,7 @@ class EnhancedMaskDecoder(torch.nn.Module):
     if getattr(config, 'graph', False):
         self.gm_head = SparseBertLMPredictionHead(config, getattr(config, 'edge_vocab_size'))
 
-  def forward(self, ctx_layers, ebd_weight,edge_ebd_weight, target_ids, input_ids, input_mask, z_states, attention_mask, encoder, relative_pos=None,adj_mat=None):
+  def forward(self, ctx_layers, ebd_weight,edge_ebd_weight, target_ids, input_ids, input_mask, z_states, attention_mask, encoder, relative_pos=None,adj_mat=None,adj_label=None):
     mlm_ctx_layers,unflattened = self.emd_context_layer(ctx_layers, z_states, attention_mask, encoder, target_ids, input_ids, input_mask, relative_pos=relative_pos,adj_mat=adj_mat)
     loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
     lm_loss = torch.tensor(0).to(ctx_layers[-1])
@@ -54,14 +54,10 @@ class EnhancedMaskDecoder(torch.nn.Module):
     if self.graph:
       edge_mask_token = 2
 
-      edge_labels = adj_mat['matrix']
+      edge_labels = adj_label
       non_zero = edge_labels.nonzero()
 
-      non_instance_non_zero = non_zero[torch.logical_not(torch.all(non_zero == torch.stack((non_zero[:,0],non_zero[:,2],non_zero[:,1])).permute(1,0),dim=1)),:]
-      non_instance_non_zero_transpose = torch.stack((non_instance_non_zero[:,0],non_instance_non_zero[:,2],non_instance_non_zero[:,1])).permute(1,0)
-      non_zero = torch.cat((non_zero, non_instance_non_zero_transpose))
-
-      edge_labels_labels = edge_labels[non_zero[:, 0], non_zero[:, 1], non_zero[:, 2]]
+      edge_labels_labels = edge_labels[non_zero[:, 0], non_zero[:, 1], non_zero[:, 2]] - 1
       edge_to = non_zero[:, (0, 2)]
       edge_to = unflattened_ctx_layer[edge_to[:,0],edge_to[:,1],:]
       edge_from = non_zero[:, (0, 1)]
@@ -70,6 +66,8 @@ class EnhancedMaskDecoder(torch.nn.Module):
       gm_logits = self.gm_head(edge_emb, edge_ebd_weight).float()
       gm_loss = loss_fct(gm_logits,edge_labels_labels.long())
       lasso = 0.0001 * torch.norm(self.gm_head.dense.weight, 1)
+      ridge = 0.0001 * torch.norm(self.gm_head.dense.weight, 2)
+      lm_loss+=ridge
       gm_loss += lasso
       pass
     lm_labels = target_ids.view(-1)
@@ -150,7 +148,7 @@ class MaskedLanguageModel(NNModule):
       label_index = (lm_labels.view(-1) > 0).nonzero()
       label_inputs = torch.gather(input_ids.view(-1), 0, label_index.view(-1))
       if label_index.size(0)>0:
-        (lm_logits, lm_labels, lm_loss,gm_logits,gm_loss,gm_labels) = self.lm_predictions(encoder_layers, ebd_weight,edge_ebd_weight, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder,adj_mat=encoder_output['adj_embeddings'])
+        (lm_logits, lm_labels, lm_loss,gm_logits,gm_loss,gm_labels) = self.lm_predictions(encoder_layers, ebd_weight,edge_ebd_weight, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder,adj_mat=encoder_output['adj_embeddings'],adj_label=adj_label)
 
     return {
             'logits' : lm_logits,
