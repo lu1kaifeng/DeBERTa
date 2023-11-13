@@ -107,7 +107,6 @@ class GraphMaskGenerator:
         for m in adj_O_to_mask:
             adj_labels[adj_O_indices[0][m], adj_O_indices[1][m]] = 1
             adj[adj_O_indices[0][m], adj_O_indices[1][m]] = edge_mask_token
-        adj_labels
 
         mask_len = 0
         offset = 0
