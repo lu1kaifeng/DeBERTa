@@ -302,6 +302,12 @@ class BertLMPredictionHead(nn.Module):
 
         self.bias = nn.Parameter(torch.zeros(vocab_size))
 
+        if getattr(config, 'graph', False):
+          self.edge_dense = nn.Parameter(torch.zeros((self.embedding_size,self.embedding_size * 2)))
+          self.edge_LayerNorm = LayerNorm(self.embedding_size, config.layer_norm_eps, elementwise_affine=True)
+          self.edge_bias = nn.Parameter(torch.zeros(getattr(config, 'edge_vocab_size')))
+          torch.nn.init.xavier_uniform(self.edge_dense)
+
     def forward(self, hidden_states, embeding_weight):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
@@ -312,27 +318,15 @@ class BertLMPredictionHead(nn.Module):
         logits = torch.matmul(hidden_states, embeding_weight.t().to(hidden_states)) + self.bias
         return logits
 
-
-class SparseBertLMPredictionHead(nn.Module):
-  def __init__(self, config, vocab_size):
-    import DeBERTa.deberta.sparselinear.sparselinear as sl
-    super().__init__()
-    self.embedding_size = getattr(config, 'embedding_size', config.hidden_size)
-    self.sparsity = getattr(config,'edge_head_sparsity')
-    self.dense = nn.Linear(config.hidden_size*2, self.embedding_size)#sl.SparseLinear(config.hidden_size*2, self.embedding_size,sparsity=self.sparsity,dynamic=True)
-    self.transform_act_fn = ACT2FN[config.hidden_act] \
-      if isinstance(config.hidden_act, str) else config.hidden_act
-
-    self.LayerNorm = LayerNorm(self.embedding_size, config.layer_norm_eps, elementwise_affine=True)
-
-    self.bias = nn.Parameter(torch.zeros(vocab_size))
-
-  def forward(self, hidden_states, embeding_weight):
-    hidden_states = self.dense(hidden_states)
-    hidden_states = self.transform_act_fn(hidden_states)
-    # b x s x d
-    hidden_states = MaskedLayerNorm(self.LayerNorm, hidden_states)
-
-    # b x s x v
-    logits = torch.matmul(hidden_states, embeding_weight.t().to(hidden_states)) + self.bias
-    return logits
+    def edge_forward(self, hidden_states,non_zero, embeding_weight):
+        unique_emb_indices = torch.unique(torch.cat((non_zero[:, :2], non_zero[:, ::2])), dim=0)
+        lookup = {(v[0],v[1]): i for i, v in enumerate(unique_emb_indices.tolist())}
+        from_list = [ lookup[f] for f in [(v[0],v[1]) for v in non_zero[:, :2].tolist()]]
+        to_list = [ lookup[f] for f in [(v[0],v[1]) for v in non_zero[:, ::2].tolist()]]
+        hidden_states = hidden_states[unique_emb_indices[:, 0], unique_emb_indices[:, 1]]
+        hidden_states = torch.cat((hidden_states[from_list], hidden_states[to_list]), dim=-1)
+        hidden_states = torch.nn.functional.linear(hidden_states,self.edge_dense)
+        hidden_states = self.transform_act_fn(hidden_states)
+        hidden_states = MaskedLayerNorm(self.edge_LayerNorm, hidden_states)
+        logits = torch.matmul(hidden_states, embeding_weight.t().to(hidden_states)) + self.edge_bias
+        return logits

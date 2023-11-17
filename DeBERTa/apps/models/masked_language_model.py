@@ -27,7 +27,7 @@ from ...deberta import *
 
 __all__ = ['MaskedLanguageModel']
 
-from ...deberta.bert import SparseBertLMPredictionHead
+
 
 
 class EnhancedMaskDecoder(torch.nn.Module):
@@ -37,8 +37,6 @@ class EnhancedMaskDecoder(torch.nn.Module):
     self.position_biased_input = getattr(config, 'position_biased_input', True)
     self.lm_head = BertLMPredictionHead(config, vocab_size)
     self.graph = getattr(config, 'graph', False)
-    if getattr(config, 'graph', False):
-        self.gm_head = SparseBertLMPredictionHead(config, getattr(config, 'edge_vocab_size'))
 
   def forward(self, ctx_layers, ebd_weight,edge_ebd_weight, target_ids, input_ids, input_mask, z_states, attention_mask, encoder, relative_pos=None,adj_mat=None,adj_label=None):
     mlm_ctx_layers,unflattened = self.emd_context_layer(ctx_layers, z_states, attention_mask, encoder, target_ids, input_ids, input_mask, relative_pos=relative_pos,adj_mat=adj_mat)
@@ -52,28 +50,21 @@ class EnhancedMaskDecoder(torch.nn.Module):
     gm_loss = 0
     gm_logits = None
     if self.graph:
-      edge_mask_token = 2
-
       edge_labels = adj_label
       non_zero = edge_labels.nonzero()
-
+      gm_logits = self.lm_head.edge_forward(unflattened_ctx_layer,non_zero,edge_ebd_weight)
       edge_labels_labels = edge_labels[non_zero[:, 0], non_zero[:, 1], non_zero[:, 2]] - 1
-      edge_to = non_zero[:, (0, 2)]
-      edge_to = unflattened_ctx_layer[edge_to[:,0],edge_to[:,1],:]
-      edge_from = non_zero[:, (0, 1)]
-      edge_from = unflattened_ctx_layer[edge_from[:,0],edge_from[:,1],:]
-      edge_emb = torch.concatenate((edge_to,edge_from),dim=-1)
-      gm_logits = self.gm_head(edge_emb, edge_ebd_weight).float()
       gm_loss = loss_fct(gm_logits,edge_labels_labels.long())
-      lasso = 0.0001 * torch.norm(self.gm_head.dense.weight, 1)
-      ridge = 0.0001 * torch.norm(self.gm_head.dense.weight, 2)
-      lm_loss+=ridge
-      gm_loss += lasso
+      #lasso = 0.001 * torch.norm(self.lm_head.dense.weight, 1)
+      ridge = 0.001 * torch.norm(self.lm_head.dense.weight, 2)
+      gm_loss+=ridge
+      #gm_loss += lasso
       pass
     lm_labels = target_ids.view(-1)
     label_index = (target_ids.view(-1)>0).nonzero().view(-1)
     lm_labels = lm_labels.index_select(0, label_index)
     lm_loss = loss_fct(lm_logits, lm_labels.long())
+    lm_loss *= 0.1
     return lm_logits, lm_labels, lm_loss,gm_logits,gm_loss,edge_labels_labels
 
   def emd_context_layer(self, encoder_layers, z_states, attention_mask, encoder, target_ids, input_ids, input_mask, relative_pos=None,adj_mat=None):

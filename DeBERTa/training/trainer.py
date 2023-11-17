@@ -139,7 +139,6 @@ class DistributedTrainer:
   def train(self):
     if not self.initialized:
       self.initialize()
-
     rank = self.args.rank
     world_size = self.args.world_size
     for n_epoch in range(self.trainer_state.epochs, self.training_epochs):

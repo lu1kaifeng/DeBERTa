@@ -48,7 +48,7 @@ class GraphMaskGenerator:
   https://github.com/zihangdai/xlnet/blob/0b642d14dd8aec7f1e1ecbf7d6942d5faa6be1f0/data_utils.py
   """
 
-    def __init__(self, tokenizer, mask_lm_prob=0.15,mask_gm_prob=0.30, max_seq_len=512, max_preds_per_seq=None, max_gram=1, keep_prob=0.1,
+    def __init__(self, tokenizer, mask_lm_prob=0.01,mask_gm_prob=0.30, max_seq_len=512, max_preds_per_seq=None, max_gram=1, keep_prob=0.1,
                  mask_prob=0.8, **kwargs):
         self.tokenizer = tokenizer
         self.mask_lm_prob = mask_lm_prob
@@ -80,7 +80,7 @@ class GraphMaskGenerator:
             else:
                 unigrams.append([id])
 
-        num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
+        num_to_predict = min(self.max_preds_per_seq, max(0, int(round(len(tokens) * self.mask_lm_prob))))
 
 
         adj_indices = numpy.nonzero(numpy.logical_or(adj > 0,adj < 0))
@@ -93,7 +93,7 @@ class GraphMaskGenerator:
         adj_reverse_values = adj[adj_reverse_indices]
         edge_num_to_predict = min(self.max_preds_per_seq, max(0, int(round(len(adj_values) * self.mask_gm_prob))))
         adj_to_mask = rng.sample(range(len(adj_values)), edge_num_to_predict)
-        adj_O_to_mask = rng.sample(range(len(adj_O_values)), edge_num_to_predict // 3)
+        adj_O_to_mask = rng.sample(range(len(adj_O_values)), edge_num_to_predict // 5)
         adj_labels = numpy.zeros(adj.shape)
         for m in adj_to_mask:
             adj_labels[adj_indices[0][m],adj_indices[1][m]] = adj_values[m]+1
@@ -101,9 +101,9 @@ class GraphMaskGenerator:
             if not (adj_reverse_indices[0][m] == adj_reverse_indices[1][m]):
                 adj_labels[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = adj_reverse_values[m] + 1
                 adj[adj_reverse_indices[0][m], adj_reverse_indices[1][m]] = edge_mask_token
-        for m in range(len(adj_values)):
+        '''for m in range(len(adj_values)):
             if m not in adj_to_mask:
-                adj_labels[adj_indices[0][m], adj_indices[1][m]] = adj_values[m] + 1
+                adj_labels[adj_indices[0][m], adj_indices[1][m]] = adj_values[m] + 1'''
         for m in adj_O_to_mask:
             adj_labels[adj_O_indices[0][m], adj_O_indices[1][m]] = 1
             adj[adj_O_indices[0][m], adj_O_indices[1][m]] = edge_mask_token
