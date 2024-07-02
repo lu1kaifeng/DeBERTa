@@ -17,6 +17,9 @@ import os
 import pdb
 
 import json
+
+from msg3d.graph.tools import walk_all_paths_torch, k_adjacency_torch, normalize_adjacency_matrix_torch
+from msg3d.model.ms_gcn import MultiScale_GraphConv
 from .ops import *
 from .disentangled_attention import *
 from .da_utils import *
@@ -45,8 +48,8 @@ class BertAttention(nn.Module):
     self.output = BertSelfOutput(config)
     self.config = config
 
-  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None):
-    output = self.self(hidden_states, attention_mask, return_att, query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat)
+  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None,graph_embed=None):
+    output = self.self(hidden_states, attention_mask, return_att, query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat,graph_embed=graph_embed)
     self_output, att_matrix, att_logits_=output['hidden_states'], output['attention_probs'], output['attention_logits']
     if query_states is None:
       query_states = hidden_states
@@ -91,9 +94,9 @@ class BertLayer(nn.Module):
     self.intermediate = BertIntermediate(config)
     self.output = BertOutput(config)
 
-  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None):
+  def forward(self, hidden_states, attention_mask, return_att=False, query_states=None, relative_pos=None, rel_embeddings=None,adj_mat=None,graph_embed=None):
     attention_output = self.attention(hidden_states, attention_mask, return_att=return_att, \
-      query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat)
+      query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat,graph_embed=graph_embed)
     if return_att:
       attention_output, att_matrix = attention_output
     intermediate_output = self.intermediate(attention_output)
@@ -133,6 +136,11 @@ class BertEncoder(nn.Module):
     super().__init__()
     #layer = BertLayer(config)
     self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+    self.graph_conv = getattr(config, 'graph_conv', False)
+    if self.graph_conv:
+      self.graph_conv_layer = nn.ModuleList(
+        [MultiScale_GraphConv(config.graph_gcn_scales, config.graph_hidden_size, config.hidden_size) for _ in
+         range(config.num_hidden_layers)])
     self.relative_attention = getattr(config, 'relative_attention', False)
     if self.relative_attention:
       self.max_relative_positions = getattr(config, 'max_relative_positions', -1)
@@ -192,7 +200,11 @@ class BertEncoder(nn.Module):
       next_kv = hidden_states
     rel_embeddings = self.get_rel_embedding()
     for i, layer_module in enumerate(self.layer):
-      output_states = layer_module(next_kv, attention_mask, return_att, query_states = query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat)
+      graph_embed = None
+      if self.graph_conv:
+        graph_embed = self.graph_conv_layer[i]((adj_mat['lookup'] > 0).to(torch.float32),adj_mat['A_powers'],adj_mat['lookup'],adj_mat['last_edge'],adj_mat['edge_embedding'])
+
+      output_states = layer_module(next_kv, attention_mask, return_att, query_states = query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings,adj_mat=adj_mat,graph_embed=graph_embed)
       if return_att:
         output_states, att_m = output_states
 
@@ -229,10 +241,11 @@ class BertEmbeddings(nn.Module):
     self.embedding_size = getattr(config, 'embedding_size', config.hidden_size)
     self.word_embeddings = nn.Embedding(config.vocab_size, self.embedding_size, padding_idx = padding_idx)
     self.position_biased_input = getattr(config, 'position_biased_input', True)
+    self.graph_hidden_size = getattr(config, 'graph_hidden_size')
     self.position_embeddings = nn.Embedding(config.max_position_embeddings, self.embedding_size)
 
     if config.graph:
-      self.edge_embeddings = nn.Embedding(config.edge_vocab_size, self.embedding_size)
+      self.edge_embeddings = nn.Embedding(config.edge_vocab_size, self.graph_hidden_size)
 
     if config.type_vocab_size>0:
       self.token_type_embeddings = nn.Embedding(config.type_vocab_size, self.embedding_size)
@@ -243,6 +256,8 @@ class BertEmbeddings(nn.Module):
     self.dropout = StableDropout(config.hidden_dropout_prob)
     self.output_to_half = False
     self.config = config
+    self.graph_hidden_size = config.graph_hidden_size
+    self.graph_gcn_scales = config.graph_gcn_scales
 
   def forward(self, input_ids, token_type_ids=None, position_ids=None, mask = None,adj_mat=None):
     seq_length = input_ids.size(1)
@@ -262,6 +277,10 @@ class BertEmbeddings(nn.Module):
       for i,e in enumerate(edge_ids):
         adj_lookup[adj_clamped == e] = i+1
       edge_embeddings = self.edge_embeddings(edge_ids)
+      adj_last_edge = walk_all_paths_torch(adj_lookup,self.graph_gcn_scales,self.graph_hidden_size)
+      A_powers = [k_adjacency_torch((adj_lookup > 0).to(torch.float32), k, with_self=False) for k in range(self.graph_gcn_scales)]
+      A_powers = [normalize_adjacency_matrix_torch(g) for g in A_powers]
+      A_powers = torch.stack(A_powers, dim=1)
 
     embeddings = words_embeddings
     if self.config.type_vocab_size>0:
@@ -282,7 +301,9 @@ class BertEmbeddings(nn.Module):
         'adj_embeddings': {'matrix':adj_clamped,
                            'edge_ids':edge_ids,
                            'edge_embedding':edge_embeddings,
-                           'lookup':adj_lookup
+                           'lookup':adj_lookup,
+                           'last_edge':adj_last_edge,
+                           'A_powers':A_powers
                            }
       }
 
@@ -303,8 +324,8 @@ class BertLMPredictionHead(nn.Module):
         self.bias = nn.Parameter(torch.zeros(vocab_size))
 
         if getattr(config, 'graph', False):
-          self.edge_dense = nn.Parameter(torch.zeros((self.embedding_size,self.embedding_size * 2)))
-          self.edge_LayerNorm = LayerNorm(self.embedding_size, config.layer_norm_eps, elementwise_affine=True)
+          self.edge_dense = nn.Parameter(torch.zeros((config.graph_hidden_size,self.embedding_size * 2)))
+          self.edge_LayerNorm = LayerNorm(config.graph_hidden_size, config.layer_norm_eps, elementwise_affine=True)
           self.edge_bias = nn.Parameter(torch.zeros(getattr(config, 'edge_vocab_size')))
           torch.nn.init.xavier_uniform(self.edge_dense)
 
