@@ -23,6 +23,10 @@ import torch
 import re
 import ujson as json
 from torch.utils.data import DataLoader
+
+from ace2005_module.data_load import ACE2005Dataset, idx2trigger, pad
+from ace2005_module.model import Net
+from ace2005_module.utils import find_triggers, calc_metric
 from .metrics import *
 from .task import EvalData, Task
 from .task_registry import register_task
@@ -55,34 +59,14 @@ class AMREETask(Task):
         middle = int(elements * ratio)
         return [list_to_split[:middle], list_to_split[middle:]]
     def train_data(self, max_seq_len=512, **kwargs):
-        self.data = self.load_data(os.path.join(self.data_dir, 'toks.txt'))
-        data,eval_data = self._list_splitter(self.data,self.split)
-        self.data_eval = eval_data
-        adj_mat_data = self.load_adj_mat_data(os.path.join(self.data_dir, 'adjs.txt'),
-                                              os.path.join(self.data_dir, 'roles.txt'))
-        adj_mat_data,eval_adj_mat_data = self._list_splitter(adj_mat_data,self.split)
-        self.adj_mat_data_eval = eval_adj_mat_data
-        examples = ExampleSet(data)
-        if self.args.num_training_steps is None:
-            dataset_size = len(examples)
-        else:
-            dataset_size = self.args.num_training_steps * self.args.train_batch_size
-        return StaticDataset(examples, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
-                            dataset_size=dataset_size, shuffle=False, supplementary=adj_mat_data, **kwargs)
+        return ACE2005Dataset(os.path.join(self.data_dir, 'train_mat.json'),None,os.path.join(self.data_dir, 'train_mat.json.cache'),os.path.join(self.data_dir, 'roles.txt'),self.tokenizer)
+
 
     def get_labels(self):
         return list(self.tokenizer.vocab.values())
 
     def eval_data(self, max_seq_len=512, **kwargs):
-        ds = [
-            (self.data_eval,self.adj_mat_data_eval)
-        ]
-        dss = []
-        for d,adj_d in ds:
-            _size = len(d)
-            dss.append(self._data('eval',StaticDataset(d, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
-                             dataset_size=_size, shuffle=False, supplementary=adj_d, **kwargs)))
-        return dss
+        return self._data('eval',ACE2005Dataset(os.path.join(self.data_dir, 'test_mat.json'),None,os.path.join(self.data_dir, 'test_mat.json.cache'),os.path.join(self.data_dir, 'roles.txt'),self.tokenizer))
 
     def test_data(self, max_seq_len=512, **kwargs):
         """See base class."""
@@ -105,161 +89,156 @@ class AMREETask(Task):
 
         return metrics_fn
 
-    def load_data(self, path):
-        examples = []
-        with open(path, encoding='utf-8') as fs:
-            for l in fs:
-                if len(l) > 1:
-                    example = ExampleInstance(segments=[l])
-                    examples.append(example)
-        return examples
+    def get_loss_fn(self, *args, **kwargs):
+        def _loss_fn(trainer, model: Net, data):
+            tokens_x_2d, entities_x_3d, postags_x_2d, triggers_y_2d, arguments_2d, seqlens_1d, head_indexes_2d, words_2d, triggers_2d, adjm, task_id,amrMat = data
+            trigger_loss, triggers_y_2d, trigger_hat_2d, argument_hidden, argument_keys = model.predict_triggers(
+                tokens_x_2d=tokens_x_2d, entities_x_3d=entities_x_3d,
+                postags_x_2d=postags_x_2d, head_indexes_2d=head_indexes_2d,
+                triggers_y_2d=triggers_y_2d, arguments_2d=arguments_2d,amrMat=amrMat)
+            if len(argument_keys) > 0:
+                argument_loss, arguments_y_2d, argument_hat_1d, argument_hat_2d = model.predict_arguments(
+                    argument_hidden, argument_keys, arguments_2d)
+                loss = trigger_loss + argument_loss
 
-    def load_adj_mat_data(self, path, roles_path):
-        examples = []
-        cache = 'adj_mat_cache.pkl'
-        import pickle
-        if os.path.exists(cache):
-            with open(cache, 'rb') as f:
-                return pickle.load(f)
-        with open(roles_path, encoding='utf-8') as rs:
-            roles = eval(rs.readline())
-            roles = {v: k for k, v in enumerate(roles)}
-            self.roles = roles
 
-        def _tokenize(elem):
-            if 'INSTANCE' in elem:
-                elem = -(eval(elem[8:])+1)
-                return elem
-            return roles[elem]
+            else:
+                loss = trigger_loss
+            return loss,1
 
-        with open(path, encoding='utf-8') as fs:
-            for l in fs:
-                if len(l) > 1:
-                    mat = eval(l)
-                    examples.append(numpy.array([[_tokenize(e) for e in r] for r in mat]))
-        with open(cache, 'wb') as f:
-            pickle.dump(examples, f)
-        return examples
-
-    def get_feature_fn(self, max_seq_len=512, mask_gen=None):
-        def _example_to_feature(example, rng=None, ext_params=None, **kwargs):
-            return self.example_to_feature(self.tokenizer,self.roles, example, max_seq_len=max_seq_len, \
-                                           rng=rng, mask_generator=mask_gen, ext_params=ext_params, **kwargs)
-
-        return _example_to_feature
-
-    def example_to_feature(self, tokenizer,adj_tokenizer, example, max_seq_len=512, rng=None, mask_generator=None, ext_params=None,
-                           **kwargs):
-        if not rng:
-            rng = random
-        max_num_tokens = max_seq_len - 2
-        example, adj = example
-        segments = [example.segments[0].strip().split()]
-        segments = _truncate_segments(segments, max_num_tokens, rng)
-        padded_adj = np.zeros((max_seq_len,max_seq_len),dtype=int)
-        padded_adj[1:adj.shape[0]+1, 1:adj.shape[1]+1] = adj
-        _tokens = ['[CLS]'] + segments[0] + ['[SEP]']
-        if mask_generator:
-            tokens, lm_labels,padded_adj,adj_labels = mask_generator.mask_tokens(_tokens, padded_adj,rng)
-        '''lm_labels = [0 for i in range(len(segments[0]))]'''
-        token_ids = tokenizer.convert_tokens_to_ids(_tokens)
-
-        features = OrderedDict(input_ids=token_ids,
-                               position_ids=list(range(len(token_ids))),
-                               input_mask=[1] * len(token_ids),
-                               labels=lm_labels)
-
-        for f in features:
-            features[f] = torch.tensor(features[f] + [0] * (max_seq_len - len(token_ids)), dtype=torch.int)
-        features['adj_mat'] = torch.tensor(padded_adj,dtype=torch.int32)
-        features['adj_label'] = torch.tensor(adj_labels, dtype=torch.int32)
-        return features
+        return _loss_fn
 
     def get_eval_fn(self):
-        def eval_fn(args, model, device, eval_data, prefix=None, tag=None, steps=None):
-            # Run prediction for full data
-            prefix = f'{tag}_{prefix}' if tag is not None else prefix
+
+        def validation(args, model, device, iterator: EvalData, prefix=None, tag=None, steps=None, return_logits=False):
+            model.eval()
+            cum_loss = 0
+            argument_count = 1
+            trigger_count = 1
+            cum_argument_loss = 0
+            cum_trigger_loss = 0
+            words_all, triggers_all, triggers_hat_all, arguments_all, arguments_hat_all = [], [], [], [], []
+            logits_list = [[], []]
+            with torch.no_grad():
+                eval_loader = DataLoader(iterator.data,batch_size=args.eval_batch_size,collate_fn=pad)
+                for i, batch in enumerate(eval_loader):
+                    tokens_x_2d, entities_x_3d, postags_x_2d, triggers_y_2d, arguments_2d, seqlens_1d, head_indexes_2d, words_2d, triggers_2d, adjm, task_id,amrMat = batch
+                    if return_logits:
+                        trigger_loss, triggers_y_2d, trigger_hat_2d, argument_hidden, argument_keys, trigger_logits = model.predict_triggers(
+                            tokens_x_2d=tokens_x_2d, entities_x_3d=entities_x_3d,
+                            postags_x_2d=postags_x_2d, head_indexes_2d=head_indexes_2d,
+                            triggers_y_2d=triggers_y_2d, arguments_2d=arguments_2d, return_logits=True,amrMat=amrMat)
+                        logits_list[0].append(
+                            (trigger_loss, triggers_y_2d, trigger_hat_2d, argument_hidden, argument_keys,
+                             trigger_logits))
+                    else:
+                        trigger_loss, triggers_y_2d, trigger_hat_2d, argument_hidden, argument_keys = model.predict_triggers(
+                            tokens_x_2d=tokens_x_2d, entities_x_3d=entities_x_3d,
+                            postags_x_2d=postags_x_2d, head_indexes_2d=head_indexes_2d,
+                            triggers_y_2d=triggers_y_2d, arguments_2d=arguments_2d,amrMat=amrMat)
+
+                    words_all.extend(words_2d)
+                    triggers_all.extend(triggers_2d)
+                    triggers_hat_all.extend(trigger_hat_2d.cpu().numpy().tolist())
+                    arguments_all.extend(arguments_2d)
+
+                    if len(argument_keys) > 0:
+                        if return_logits:
+                            argument_loss, arguments_y_2d, argument_hat_1d, argument_hat_2d, argument_logits = model.predict_arguments(
+                                argument_hidden, argument_keys, arguments_2d, return_logits=True)
+                            logits_list[1].append(
+                                (argument_loss, arguments_y_2d, argument_hat_1d, argument_hat_2d, argument_logits))
+                        else:
+                            argument_loss, arguments_y_2d, argument_hat_1d, argument_hat_2d = model.predict_arguments(
+                                argument_hidden, argument_keys, arguments_2d)
+                        arguments_hat_all.extend(argument_hat_2d)
+                        cum_trigger_loss += trigger_loss
+                        cum_loss += trigger_loss + argument_loss
+                        cum_argument_loss += argument_loss
+                        trigger_count += 1
+                        argument_count += 1
+                        # if i == 0:
+
+                        #     print("=====sanity check for triggers======")
+                        #     print('triggers_y_2d[0]:', triggers_y_2d[0])
+                        #     print("trigger_hat_2d[0]:", trigger_hat_2d[0])
+                        #     print("=======================")
+
+                        #     print("=====sanity check for arguments======")
+                        #     print('arguments_y_2d[0]:', arguments_y_2d[0])
+                        #     print('argument_hat_1d[0]:', argument_hat_1d[0])
+                        #     print("arguments_2d[0]:", arguments_2d)
+                        #     print("argument_hat_2d[0]:", argument_hat_2d)
+                        #     print("=======================")
+                    else:
+                        batch_size = len(arguments_2d)
+                        argument_hat_2d = [{'events': {}} for _ in range(batch_size)]
+                        arguments_hat_all.extend(argument_hat_2d)
+                        cum_loss += trigger_loss
+                        cum_trigger_loss += trigger_loss
+                        trigger_count += 1
+
+            triggers_true, triggers_pred, arguments_true, arguments_pred = [], [], [], []
+            for i, (words, triggers, triggers_hat, arguments, arguments_hat) in enumerate(
+                    zip(words_all, triggers_all, triggers_hat_all, arguments_all, arguments_hat_all)):
+                triggers_hat = triggers_hat[:len(words)]
+                triggers_hat = [idx2trigger[hat] for hat in triggers_hat]
+
+                # [(ith sentence, t_start, t_end, t_type_str)]
+                triggers_true.extend([(i, *item) for item in find_triggers(triggers)])
+                triggers_pred.extend([(i, *item) for item in find_triggers(triggers_hat)])
+
+                # [(ith sentence, t_start, t_end, t_type_str, a_start, a_end, a_type_idx)]
+                for trigger in arguments['events']:
+                    t_start, t_end, t_type_str = trigger
+                    for argument in arguments['events'][trigger]:
+                        a_start, a_end, a_type_idx = argument
+                        arguments_true.append((i, t_start, t_end, t_type_str, a_start, a_end, a_type_idx))
+
+                for trigger in arguments_hat['events']:
+                    t_start, t_end, t_type_str = trigger
+                    for argument in arguments_hat['events'][trigger]:
+                        a_start, a_end, a_type_idx = argument
+                        arguments_pred.append((i, t_start, t_end, t_type_str, a_start, a_end, a_type_idx))
+
+            # print(classification_report([idx2trigger[idx] for idx in y_true], [idx2trigger[idx] for idx in y_pred]))
+
+            trigger_p, trigger_r, trigger_f1 = calc_metric(triggers_true, triggers_pred)
+            argument_p, argument_r, argument_f1 = calc_metric(arguments_true, arguments_pred)
             eval_results = OrderedDict()
-            eval_metric = 0
-            no_tqdm = (True if os.getenv('NO_TQDM', '0') != '0' else False) or args.rank > 0
-            for eval_item in eval_data:
-                name = eval_item.name
-                eval_sampler = SequentialSampler(len(eval_item.data))
-                batch_sampler = BatchSampler(eval_sampler, args.eval_batch_size)
-                batch_sampler = DistributedBatchSampler(batch_sampler, rank=args.rank, world_size=args.world_size)
-                eval_dataloader = DataLoader(eval_item.data, batch_sampler=batch_sampler, num_workers=args.workers)
-                model.eval()
-                eval_loss, eval_accuracy = 0, 0
-                gm_eval_loss, gm_eval_accuracy = 0, 0
-                nb_eval_steps, nb_eval_examples = 0, 0
-                predicts = []
-                gm_predicts=[]
-                labels = []
-                gm_labels=[]
-                for batch in tqdm(eval_dataloader, ncols=80, desc='Evaluating: {}'.format(prefix),
-                                  disable=no_tqdm):
-                    batch = batch_to(batch, device)
-                    with torch.no_grad():
-                        output = model(**batch)
-                    logits = output['logits'].detach().argmax(dim=-1)
-                    gm_logits = output['gm_logits'].detach().argmax(dim=-1)
-                    tmp_eval_loss = output['loss'].detach()
-                    tmp_gm_eval_loss = output['gm_loss'].detach()
-                    if 'labels' in output:
-                        label_ids = output['labels'].detach().to(device)
-                    else:
-                        label_ids = batch['labels'].to(device)
-                    if 'gm_labels' in output:
-                        gm_label_ids = output['gm_labels'].detach().to(device)
-                    else:
-                        gm_label_ids = batch['gm_labels'].to(device)
-                    predicts.append(logits)
-                    gm_predicts.append(gm_logits)
-                    labels.append(label_ids)
-                    gm_labels.append(gm_label_ids)
-                    eval_loss += tmp_eval_loss.mean()
-                    gm_eval_loss += tmp_gm_eval_loss.mean()
-                    input_ids = batch['input_ids']
-                    nb_eval_examples += input_ids.size(0)
-                    nb_eval_steps += 1
-
-                eval_loss = eval_loss / nb_eval_steps
-                gm_eval_loss = gm_eval_loss /  nb_eval_steps
-                predicts = merge_distributed(predicts)
-                gm_predicts = merge_distributed(gm_predicts)
-                labels = merge_distributed(labels)
-                gm_labels=merge_distributed(gm_labels)
-
-                result = OrderedDict()
-                metrics_fn = eval_item.metrics_fn
-                metrics = metrics_fn(predicts.numpy(), labels.numpy())
-                gm_metrics = metrics_fn(gm_predicts.numpy(), gm_labels.numpy())
-                result.update(metrics)
-                result.update({'gm_'+k:v for k,v in gm_metrics.items()})
-                result['perplexity'] = torch.exp(eval_loss).item()
-                result['gm_perplexity'] = torch.exp(gm_eval_loss).item()
-                critial_metrics = set(metrics.keys()) if eval_item.critial_metrics is None or len(
-                    eval_item.critial_metrics) == 0 else eval_item.critial_metrics
-                eval_metric = np.mean([v for k, v in metrics.items() if k in critial_metrics])
-                gm_eval_metric = np.mean([v for k, v in metrics.items() if k in critial_metrics])
-                result['eval_loss'] = eval_loss.item()
-                #result['eval_metric'] = eval_metric
-                result['eval_samples'] = len(labels)
-                result['gm_eval_loss'] = gm_eval_loss.item()
-                #result['gm_eval_metric'] = np.mean([v for k, v in gm_metrics.items() if k in critial_metrics])
-                if args.rank <= 0:
-                    logger.info("***** Eval results-{}-{} *****".format(name, prefix))
-                    for key in sorted(result.keys()):
-                        logger.info("  %s = %s", key, str(result[key]))
-                eval_results[name] = (gm_eval_metric, gm_predicts, gm_labels),result
-
+            eval_results[iterator.name] = (trigger_f1, argument_f1), OrderedDict()
             return eval_results
 
-        return eval_fn
+        return validation
+
 
     def get_model_class_fn(self):
         def partial_class(*wargs, **kwargs):
-            return MaskedLanguageModel.load_model(*wargs, **kwargs)
+
+            from ace2005_module.consts import NONE, PAD, CLS, SEP, TRIGGERS, ARGUMENTS, ENTITIES, POSTAGS
+
+            def build_vocab(labels, BIO_tagging=True):
+                all_labels = [PAD, NONE]
+                for label in labels:
+                    if BIO_tagging:
+                        all_labels.append('B-{}'.format(label))
+                        all_labels.append('I-{}'.format(label))
+                    else:
+                        all_labels.append(label)
+                label2idx = {tag: idx for idx, tag in enumerate(all_labels)}
+                idx2label = {idx: tag for idx, tag in enumerate(all_labels)}
+                # idx2label.update({tag: idx for idx, tag in enumerate(all_labels)})
+
+                return all_labels, label2idx, idx2label
+
+            all_triggers, trigger2idx, idx2trigger = build_vocab(TRIGGERS)
+            all_entities, entity2idx, idx2entity = build_vocab(ENTITIES)
+            all_postags, postag2idx, idx2postag = build_vocab(POSTAGS, BIO_tagging=False)
+            all_arguments, argument2idx, idx2argument = build_vocab(ARGUMENTS, BIO_tagging=False)
+            premodel = MaskedLanguageModel.load_model(*wargs, **kwargs)
+            return Net(trigger_size=len(all_triggers),PreModel=premodel.deberta, entity_size=len(all_entities),
+                  all_postags=len(all_postags),
+                  argument_size=len(all_arguments), idx2trigger=idx2trigger)
 
         return partial_class
 

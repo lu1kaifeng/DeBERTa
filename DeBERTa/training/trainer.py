@@ -18,6 +18,8 @@ from collections.abc import Mapping, Sequence
 import tqdm
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
+
+from ace2005_module.data_load import pad
 from ..data import BatchSampler, DistributedBatchSampler,RandomSampler,SequentialSampler, AsyncDataLoader
 from ..utils import get_logger
 logger = get_logger()
@@ -147,13 +149,18 @@ class DistributedTrainer:
       batch_sampler.next = self.trainer_state.next_batch
       #num_workers = getattr(self.args, 'workers', 0)
       num_workers = 0
-      train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers, worker_init_fn=self.init_fn, pin_memory=False)
+      if self.args.collate_pad:
+        train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers,
+                                      worker_init_fn=self.init_fn, pin_memory=False,collate_fn=pad)
+      else:
+        train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers, worker_init_fn=self.init_fn, pin_memory=False)
       torch.cuda.empty_cache()
-      for step, batch in tqdm.tqdm(enumerate(train_dataloader)):
+      for step, batch in tqdm.tqdm(enumerate(train_dataloader),position=0):
         if self.trainer_state.steps >= self.training_steps:
           break
         bs_scale = 1
-        batch = batch_to(batch, self.device)
+        if not self.args.no_batch_to:
+          batch = batch_to(batch, self.device)
         self._train_step(batch, bs_scale)
       # Save model
       self.trainer_state.epochs += 1

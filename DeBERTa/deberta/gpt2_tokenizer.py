@@ -97,29 +97,6 @@ class GPT2Tokenizer(object):
 
     return [t for t in bpe.split(' ') if t]
 
-  def traced_tokenize(self, text):
-    """ Convert an input text to tokens.
-
-      Args:
-
-        text (:obj:`str`): input text to be tokenized.
-
-      Returns:
-        A list of byte tokens where each token represent the byte id in GPT2 byte dictionary
-
-      Example::
-
-        >>> tokenizer = GPT2Tokenizer()
-        >>> text = "Hello world!"
-        >>> tokens = tokenizer.tokenize(text)
-        >>> print(tokens)
-        ['15496', '995', '0']
-
-    """
-    bpe,traced = self._traced_encode(text)
-
-    return [t for t in bpe.split(' ') if t],traced
-
   def convert_tokens_to_ids(self, tokens):
     """ Convert list of tokens to ids.
       
@@ -210,9 +187,6 @@ class GPT2Tokenizer(object):
   def _encode(self, x: str) -> str:
     return ' '.join(map(str, self.bpe.encode(x)))
 
-  def _traced_encode(self,x: str):
-    encoded,traced = self.bpe.traced_encode(x)
-    return ' '.join(map(str, encoded)), traced
   def _decode(self, x: str) -> str:
     return self.bpe.decode(map(int, x.split()))
 

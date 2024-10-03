@@ -291,6 +291,15 @@ class MLGMTask(Task):
         features['adj_label'] = torch.tensor(adj_labels, dtype=torch.int32)
         return features
 
+    def get_loss_fn(self, *args, **kwargs):
+        def _loss_fn(trainer, model, data):
+            output = model(**data)
+            loss = output['loss']
+            gm_loss = output['gm_loss']
+            return loss.mean() + gm_loss.mean(), data['input_ids'].size(0)
+
+        return _loss_fn
+
     def get_eval_fn(self):
         def eval_fn(args, model, device, eval_data, prefix=None, tag=None, steps=None):
             # Run prediction for full data

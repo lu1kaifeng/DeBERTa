@@ -462,6 +462,17 @@ def build_argument_parser():
             type=boolean_string,
             help="Whether to export model to ONNX format.")
 
+  parser.add_argument('--collate_pad',
+                      default=False,
+                      action='store_true',
+                      help="Pad when ACE2005.")
+
+  parser.add_argument('--no_batch_to',
+                      default=False,
+                      action='store_true',
+                      help="No Batch To when ACE2005.")
+
+
   return parser
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from tqdm import tqdm
 import numpy as np
 
 if __name__ == '__main__':
-    p, t = deberta.load_vocab(vocab_path=None, vocab_type='spm', pretrained_id='large')
+    p, t = deberta.load_vocab(vocab_path=None, vocab_type='spm', pretrained_id='large',cache_dir='E:\DeBERTa\deberta-large')
     tokenizer = deberta.tokenizers[t](p)
     import json
     import numpy as np
@@ -78,7 +78,15 @@ for i, o in zip(['train_ali.json', 'dev_ali.json', 'test_ali.json'],
         entry = json.loads(fs.read())
         for e in entry:
             e['amr'] = to_entry(e['amrAlign'][0] if 'amrAlign' in e else None, e['words'])
-            tokens, traced = tokenizer.traced_tokenize(e['sentence'])
+            #saaassa, traced = tokenizer.traced_tokenize(e['sentence'])
+            words = e['words']
+            tokens = []
+            token_trace = []
+            for wi,w in enumerate(words):
+                www = tokenizer.tokenize(w)
+                tokens += www
+                token_trace += [wi] * len(www)
+            traced = token_trace
             adj = [['O' for ii in range(len(traced))] for i in range(len(traced))]
             for tx in range(len(traced)):
                 for ty in range(len(traced)):
