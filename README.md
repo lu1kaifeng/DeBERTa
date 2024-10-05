@@ -1,23 +1,13 @@
-# DeBERTa: Decoding-enhanced BERT with Disentangled Attention
-
-This repository is the official implementation of [ **DeBERTa**: **D**ecoding-**e**nhanced **BERT** with Disentangled **A**ttention ](https://arxiv.org/abs/2006.03654) and [DeBERTa V3: Improving DeBERTa using ELECTRA-Style Pre-Training with Gradient-Disentangled Embedding Sharing](https://arxiv.org/abs/2111.09543)
-## Part of my thesis: AMR-Augmented DeBERTa
-A method for processing natural language text and its corresponding Abstract Meaning Representation (AMR) graph:
-
-For a given text and its corresponding Abstract Meaning Representation (AMR) graph, first generate the adjacency matrix of the AMR graph. According to the definition of the AMR schema, the edges in the matrix belong to one of over 100 types. Similar to DeBERTa's encoding of tokens, vocabulary embeddings are assigned to each type.
-
-For each input and each layer, determine the types of edges present in the adjacency matrix, obtain the corresponding embeddings, and project them into the key projection matrix of the AMR graph to obtain keys. Multiply the keys of the AMR graph by the values of the text, and then use the adjacency matrix to obtain attention scores from the starting point to the ending point of the edge through the torch.gather operation.
-
-Next, project the edge type embeddings into the value projection matrix of the AMR graph to obtain values. Multiply the values of the AMR graph by the keys of the text, and then use the transposed adjacency matrix through the torch.gather operation to obtain attention scores from the edge to the ending point of the edge.
-
-Add these two attention scores to get the attention score from text to text, completing the comprehensive encoding of the AMR graph and text.
+# Chapter 2 of my thesis: AMR-Augmented DeBERTa
+Chapter 2 proposes a novel event extraction method based on a disentangled abstract meaning representation attention mechanism. The core of this method is the design of a new attention mechanism that effectively integrates textual information with abstract meaning representation graph information, enhancing the model's ability to understand text semantics. To better utilize graph structure information, this chapter also introduces a multi-scale graph information aggregation method, which can independently model neighborhoods at different distances from nodes, achieving more efficient information aggregation. In the pre-training phase, this chapter designs a masked language-abstract meaning modeling task, which simultaneously predicts masked text words and abstract meaning representation graphs, enhancing the model's understanding of the relationship between the two. Extensive experiments on the ACE2005 dataset demonstrate that this method achieves significant performance improvements in both non-continual and continual event extraction tasks, suitable for low-resource and multi-domain scenarios. 
 
 Framework overview:
-![framework attention mechanism](https://github.com/lu1kaifeng/DeBERTa/blob/master/schematic_en.png)
+![framework overview](https://github.com/lu1kaifeng/DeBERTa/blob/master/schematic_en.png)
 
 Framework attention mechanism:
-![framework overview](https://github.com/lu1kaifeng/DeBERTa/blob/master/attention_en.png)
+![framework attention mechanism](https://github.com/lu1kaifeng/DeBERTa/blob/master/attention_en.png)
 
+# DeBERTa: Decoding-enhanced BERT with Disentangled Attention
 ## News
 ### 03/18/2023
 - [DeBERTaV3](https://openreview.net/forum?id=sE7-XhLxHA) paper is accepted by ICLR 2023.
