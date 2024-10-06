@@ -7,6 +7,93 @@ Framework overview:
 Framework attention mechanism:
 ![framework attention mechanism](https://github.com/lu1kaifeng/DeBERTa/blob/master/attention_en.png)
 
+## How to run
+
+Two tasks are added; MLGM and AMREE, which are the masked language-abstract meaning modeling task and AMR-enhanced event extraction task respectively.
+
+For MLGM, run:
+```shell
+python3 E:/DeBERTa/DeBERTa/apps/run.py
+--task_name
+MLGM
+--do_train
+--data_dir
+DeBERTa/mlgm-amr3
+--eval_batch_size
+8
+--predict_batch_size
+8
+--output_dir
+DeBERTa/mlgm-model
+--num_train_epochs
+10
+--warmup
+100
+--learning_rate
+1e-5
+--train_batch_size
+4
+--max_seq_len
+350
+--init_model
+./deberta-large/pytorch_model.bin
+--model_config
+./deberta-large/model_config.json
+--vocab_type
+large
+--workers
+0
+--dump_interval
+3000
+```
+
+For AMREE, run:
+```shell
+python3 E:/DeBERTa/DeBERTa/apps/run.py
+--task_name
+AMREE
+--do_train
+--data_dir
+DeBERTa/amree_data
+--eval_batch_size
+8
+--predict_batch_size
+8
+--output_dir
+DeBERTa/amree-model
+--num_train_epochs
+10
+--warmup
+100
+--learning_rate
+1e-5
+--train_batch_size
+4
+--max_seq_len
+350
+--init_model
+./deberta-large/pytorch_model.bin
+--model_config
+./deberta-large/model_config.json
+--vocab_type
+large
+--workers
+0
+--dump_interval
+500
+--collate_pad
+--no_batch_to
+```
+
+AMREE relies on the pre-trained weight from MLGM.
+
+MLGM is trained on the AMR3.0 dataset, the dataset must be preprocessed with code from ```experiments/amr_language_model``` for the task. AMREE task is based on the ACE2005 dataset, data preprocessing requires AMR generation and alignment, available pre-processing code is at ```experiments/amr_event_extraction```, the rest is to be released.
+
+## MLGM result
+
+Through random masking, a total of 53328 samples are generated, after 13332 steps (1 epoch), masked language modeling accuracy (```accuracy```) and masked abstract meaning modeling accuracy (```gm_accuracy```) are plotted as following.
+
+![mlgm_ep1](https://github.com/lu1kaifeng/DeBERTa/blob/master/mlgm_exp_acc.png)
 # DeBERTa: Decoding-enhanced BERT with Disentangled Attention
 ## News
 ### 03/18/2023
