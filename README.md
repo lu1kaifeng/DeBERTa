@@ -91,7 +91,7 @@ MLGM is trained on the AMR3.0 dataset, the dataset must be preprocessed with cod
 
 ## MLGM result
 
-Through random masking, a total of 53328 samples are generated, after 13332 steps (1 epoch), masked language modeling accuracy (```accuracy```) and masked abstract meaning modeling accuracy (```gm_accuracy```) are plotted as following.
+Through random masking, a total of 53328 samples are generated, after 24000 steps, masked language modeling accuracy (```accuracy```) and masked abstract meaning modeling accuracy (```gm_accuracy```) are plotted as following. MLM/ MGM sample ratio still requires further tuning.
 
 ![mlgm_ep1](https://github.com/lu1kaifeng/DeBERTa/blob/master/mlgm_exp_acc.png)
 # DeBERTa: Decoding-enhanced BERT with Disentangled Attention
