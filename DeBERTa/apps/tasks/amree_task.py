@@ -185,8 +185,21 @@ class AMREETask(Task):
                 triggers_hat = [idx2trigger[hat] for hat in triggers_hat]
 
                 # [(ith sentence, t_start, t_end, t_type_str)]
-                triggers_true.extend([(i, *item) for item in find_triggers(triggers)])
-                triggers_pred.extend([(i, *item) for item in find_triggers(triggers_hat)])
+                triggers_true_temp = [(i, *item) for item in find_triggers(triggers)]
+                triggers_pred_temp = [(i, *item) for item in find_triggers(triggers_hat)]
+                triggers_pred_bow_temp = []
+                for i,t_start,t_end,t_type in triggers_pred_temp:
+                    replaced = False
+                    for i, tgt_start, tgt_end, tgt_type in triggers_true_temp:
+                        if tgt_start <= t_start and t_end <= tgt_end and tgt_type == t_type:
+                            triggers_pred_bow_temp.append((i, tgt_start, tgt_end, t_type))
+                            replaced = True
+                            break
+                    if not replaced:
+                        triggers_pred_bow_temp.append((i,t_start,t_end,t_type))
+
+                triggers_true.extend(triggers_true_temp)
+                triggers_pred.extend(triggers_pred_bow_temp)
 
                 # [(ith sentence, t_start, t_end, t_type_str, a_start, a_end, a_type_idx)]
                 for trigger in arguments['events']:
@@ -206,7 +219,14 @@ class AMREETask(Task):
             trigger_p, trigger_r, trigger_f1 = calc_metric(triggers_true, triggers_pred)
             argument_p, argument_r, argument_f1 = calc_metric(arguments_true, arguments_pred)
             eval_results = OrderedDict()
-            eval_results[iterator.name] = (trigger_f1, argument_f1), OrderedDict()
+            disp_results = OrderedDict()
+            disp_results['trigger_f1'] = trigger_f1
+            disp_results['arg_f1'] = argument_f1
+            if args.rank <= 0:
+                logger.info("***** Eval results-{}-{} *****".format(iterator.name, prefix))
+                for key in sorted(disp_results.keys()):
+                    logger.info("  %s = %s", key, str(disp_results[key]))
+            eval_results[iterator.name] = (trigger_f1, argument_f1), disp_results
             return eval_results
 
         return validation
@@ -235,10 +255,13 @@ class AMREETask(Task):
             all_entities, entity2idx, idx2entity = build_vocab(ENTITIES)
             all_postags, postag2idx, idx2postag = build_vocab(POSTAGS, BIO_tagging=False)
             all_arguments, argument2idx, idx2argument = build_vocab(ARGUMENTS, BIO_tagging=False)
-            premodel = MaskedLanguageModel.load_model(*wargs, **kwargs)
-            return Net(trigger_size=len(all_triggers),PreModel=premodel.deberta, entity_size=len(all_entities),
+            #premodel = MaskedLanguageModel.load_model(*wargs, **kwargs)
+            premodel = MaskedLanguageModel.load_model(None,wargs[1], **kwargs)
+            net =  Net(trigger_size=len(all_triggers),PreModel=premodel.deberta, entity_size=len(all_entities),
                   all_postags=len(all_postags),
                   argument_size=len(all_arguments), idx2trigger=idx2trigger)
+            net.load_state_dict(torch.load(wargs[0]))
+            return net
 
         return partial_class
 

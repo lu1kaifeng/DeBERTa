@@ -135,9 +135,18 @@ class Net(nn.Module):
         return param_list
 
     def predict_arguments(self, argument_hidden, argument_keys, arguments_2d,return_logits = False):
+        bow_argument_keys = []
+        for i, t_start, t_end, t_type_str, e_start, e_end, e_type_str in argument_keys:
+            replaced = False
+            for (tgt_start, tgt_end, tgt_type_str)  in arguments_2d[i]['events']:
+                if tgt_start <= t_start and t_end <= tgt_end and tgt_type_str == t_type_str:
+                    bow_argument_keys.append((i, tgt_start, tgt_end, t_type_str, e_start, e_end, e_type_str))
+                    replaced = True
+                    break
+            if not replaced:
+                bow_argument_keys.append((i, t_start, t_end, t_type_str, e_start, e_end, e_type_str))
+        argument_keys = bow_argument_keys
         argument_hidden = torch.stack(argument_hidden)
-
-
         arguments_y_1d = []
         for i, t_start, t_end, t_type_str, e_start, e_end, e_type_str in argument_keys:
             a_label = argument2idx[NONE]

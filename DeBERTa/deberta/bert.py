@@ -327,7 +327,7 @@ class BertLMPredictionHead(nn.Module):
           self.edge_dense = nn.Parameter(torch.zeros((config.graph_hidden_size,self.embedding_size * 2)))
           self.edge_LayerNorm = LayerNorm(config.graph_hidden_size, config.layer_norm_eps, elementwise_affine=True)
           self.edge_bias = nn.Parameter(torch.zeros(getattr(config, 'edge_vocab_size')))
-          torch.nn.init.xavier_uniform(self.edge_dense)
+          #torch.nn.init.xavier_uniform(self.edge_dense)
 
     def forward(self, hidden_states, embeding_weight):
         hidden_states = self.dense(hidden_states)

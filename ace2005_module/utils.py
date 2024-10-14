@@ -66,7 +66,7 @@ def find_triggers(labels):
     return [tuple(item) for item in result]
 # def find_triggers(labels):
 #     """
-#     :param labels: ['B-Conflict:Attack', 'I-Conflict:Attack', 'O', 'B-Life:Marry']
+#     :param labels: ['Conflict:Attack', 'Conflict:Attack', 'O', 'Life:Marry']
 #     :return: [(0, 2, 'Conflict:Attack'), (3, 4, 'Life:Marry')]
 #     """
 #     result = []
